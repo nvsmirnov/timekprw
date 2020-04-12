@@ -1,0 +1,1 @@
+gcloud app deploy gc-app.yaml --project timekprw --version dev
