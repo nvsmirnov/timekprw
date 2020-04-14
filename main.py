@@ -1,7 +1,9 @@
 import os
+import sys
 import html
 import uuid
 import re
+import json
 
 from flask import redirect, request, url_for, abort, render_template
 
@@ -11,7 +13,11 @@ import requests
 
 from flaskapp import app, db, models, forms
 
-import json
+import logging
+from logging import debug, info, warning, error
+
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger().setLevel(logging.DEBUG)  # as I understand, this is required for gcp?
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
@@ -42,10 +48,11 @@ def load_user(user_id):
 @app.route("/")
 def webroot():
     if not current_user.is_authenticated:
-        user = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
-        login_user(user, remember=True)
-        return redirect(url_for("webroot"))
-
+        if os.environ.get('APP_ENVIRONMENT', None) == "dev":
+            # TODO: remove this in prod
+            user = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
+            login_user(user, remember=True)
+            return redirect(url_for("webroot"))
         rv = '<a class="button" href="/login">Google Login</a>'
         return rv
     else:
@@ -193,7 +200,7 @@ def callback():
     if userinfo_response.json().get("email_verified"):
         unique_id = userinfo_response.json()["sub"]
         users_email = userinfo_response.json()["email"]
-        picture = userinfo_response.json()["picture"]
+        #picture = userinfo_response.json()["picture"]
         users_name = userinfo_response.json()["given_name"]
     else:
         return "User email not available or not verified by Google.", 400
@@ -203,9 +210,9 @@ def callback():
     if user:
         if user.name != users_name: user.name = users_name
         if user.email != users_email: user.email = users_email
-        if user.picture != picture: user.picture = picture
+        #if user.picture != picture: user.picture = picture
     else:
-        user = models.Manager(ext_auth_id=unique_id, ext_auth_type=models.ExtAuthTypeGoogleAuth, name=users_name, email=users_email, picture=picture)
+        user = models.Manager(ext_auth_id=unique_id, ext_auth_type=models.ExtAuthTypeGoogleAuth, name=users_name, email=users_email)
         db.session.add(user)
     db.session.commit()
 
@@ -222,35 +229,7 @@ def dump():
     """
     if os.environ.get('APP_ENVIRONMENT', None) != "dev":
         abort(404)
-    rv = '<code>'
-    rv += "Managers:<br>"
-    for manager in models.Manager.query.all():
-        rv += html.escape(repr(manager)) + "<br>"
-        if len(manager.hosts):
-            rv += "&nbsp;&nbsp;Managed hosts:<br>"
-            for host in manager.hosts:
-                rv += "&nbsp;&nbsp;- " + html.escape(repr(host)) + "<br>"
-    rv += "Hosts:<br>"
-    for host in models.ManagedHost.query.all():
-        rv += html.escape(repr(host)) + "<br>"
-        # managers
-        if not len(host.managers):
-            rv += "&nbsp;&nbsp;(not managed by anyone, isn't it strange?)<br>"
-        else:
-            rv += "&nbsp;&nbsp;Managed by:<br>"
-            for manager in host.managers:
-                rv += "&nbsp;&nbsp;- " + html.escape(repr(manager)) + "<br>"
-        # users
-        if not len(host.users):
-            rv += "&nbsp;&nbsp;(no users)"
-        else:
-            rv += "&nbsp;&nbsp;Managed Users:<br>"
-            for user in host.users:
-                rv += "&nbsp;&nbsp;- " + html.escape(repr(user)) + "<br>"
-                for timeoverride in user.timeoverrides:
-                    rv += "&nbsp;&nbsp;&nbsp;&nbsp;- " + html.escape(repr(timeoverride)) + "<br>"
-    rv += "</code>"
-    return rv
+    return f'<pre>\n{html.escape(dumpdata())}\n</pre>'
 
 
 @app.route("/logout")
@@ -260,35 +239,97 @@ def logout():
     return redirect(url_for("webroot"))
 
 
-if __name__ == "__main__":
+def dumpdata():
+    debug("called dumpdata()")
+    rv=''
+    rv += 'Managers:\n'
+    for manager in models.Manager.query.all():
+        rv += f'  {repr(manager)}\n'
+        if len(manager.hosts):
+            rv += f'    Managed hosts:\n'
+            for host in manager.hosts:
+                rv += f'      - {repr(host)}\n'
+    rv += 'Hosts:\n'
+    for host in models.ManagedHost.query.all():
+        rv += f'  {repr(host)}\n'
+        if not len(host.managers):
+            rv += "    (not managed by anyone, isn't it strange?)\n"
+        else:
+            rv += "    Managed by:\n"
+            for manager in host.managers:
+                rv += f"      - {repr(manager)}\n"
+        if not len(host.users):
+            rv += "    (no users)\n"
+        else:
+            rv += "    Managed Users:\n"
+            for user in host.users:
+                rv += f"      - {repr(user)}\n"
+                for timeoverride in user.timeoverrides:
+                    rv += f"        - {repr(timeoverride)}\n"
+    debug("returning from dumpdata()")
+    return rv
+
+
+@app.before_first_request
+def app_init():
+    debug("running db.create_all()")
     db.create_all()
+    debug("done db.create_all()")
 
     if os.environ.get('APP_ENVIRONMENT', None) == "dev":
-        host1 = models.ManagedHost(uuid=str(uuid.uuid1()), hostname='testhost.tld')
-        db.session.add(host1)
-        host2 = models.ManagedHost(uuid=str(uuid.uuid1()), hostname='otherhost.dom')
-        db.session.add(host2)
-        user1 = models.ManagedUser(uuid=str(uuid.uuid1()), login="testuser1", host=host1)
-        db.session.add(user1)
-        user2 = models.ManagedUser(uuid=str(uuid.uuid1()), login="testuser2", host=host1)
-        db.session.add(user2)
 
-        host3 = models.ManagedHost(uuid=str(uuid.UUID('59e8368c-7dbc-11ea-923e-7cb0c2957d37')), hostname='john')
-        db.session.add(host3)
-        user3 = models.ManagedUser(uuid=str(uuid.uuid1()), login="rightrat", host=host3)
-        db.session.add(user3)
+        if models.Manager.query.count():
+            debug("skipping creation of dev objects - database already has objects")
+        else:
+            debug("creating dev objects")
 
-        manager1 = models.Manager()
-        manager1.hosts.append(host1)
-        manager1.hosts.append(host2)
+            host1 = models.ManagedHost(uuid=str(uuid.uuid1()), hostname='testhost.tld')
+            db.session.add(host1)
+            host2 = models.ManagedHost(uuid=str(uuid.uuid1()), hostname='otherhost.dom')
+            db.session.add(host2)
+            user1 = models.ManagedUser(uuid=str(uuid.uuid1()), login="testuser1", host=host1)
+            db.session.add(user1)
+            user2 = models.ManagedUser(uuid=str(uuid.uuid1()), login="testuser2", host=host1)
+            db.session.add(user2)
+            manager1 = models.Manager()
+            manager1.hosts.append(host1)
+            manager1.hosts.append(host2)
+            db.session.add(manager1)
+
+            db.session.commit()
+            debug("done creating dev objects")
+
+
+    # TODO: remove this in production
+    debug("creating built-in objects")
+    host = models.ManagedHost.query.filter_by(uuid='59e8368c-7dbc-11ea-923e-7cb0c2957d37').first()
+    if not host:
+        debug("creating host")
+        host = models.ManagedHost(uuid=str(uuid.UUID('59e8368c-7dbc-11ea-923e-7cb0c2957d37')), hostname='john')
+        user = models.ManagedUser(uuid=str(uuid.uuid1()), login='rightrat', host=host)
+        db.session.add(user)
+        db.session.add(host)
+    manager1 = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
+    if not manager1:
+        debug("creating manager nsmirnov@gmail.com")
+        manager1 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth, ext_auth_id='118295366576899719337', email='nsmirnov@gmail.com')
+        manager1.hosts.append(host)
         db.session.add(manager1)
-
-        manager2 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth, ext_auth_id='118295366576899719337', email='nsmirnov@gmail.com')
-        manager2.hosts.append(host1)
-        manager2.hosts.append(host3)
+    manager2 = models.Manager.query.filter_by(email='nsmirnov.pda@gmail.com').first()
+    if not manager2:
+        debug("creating manager nsmirnov.pda@gmail.com")
+        manager2 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth, ext_auth_id='103494272264223262600', email='nsmirnov.pda@gmail.com')
+        manager2.hosts.append(host)
         db.session.add(manager2)
+    db.session.commit()
+    debug("done creating built-in objects")
 
-        db.session.commit()
+    debug(dumpdata())
+
+
+if __name__ == "__main__":
+
+    info("starting app")
 
     if os.environ.get('APP_ENVIRONMENT', None) == "dev":
         app.run(

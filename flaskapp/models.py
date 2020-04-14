@@ -15,11 +15,10 @@ class Manager(db.Model, UserMixin):  # UserMixin for flask_login
     """
     __tablename__ = 'manager'
     id = db.Column(db.Integer, primary_key=True)
-    ext_auth_type = db.Column(db.Text, index=True)  # type of external authentication system, one of ManagerExtTypeXXXXX
-    ext_auth_id = db.Column(db.Text, index=True)  # id in external authentication system
-    name = db.Column(db.Text, index=True)
-    email = db.Column(db.Text, index=True, unique=True)
-    picture = db.Column(db.Text)
+    ext_auth_type = db.Column(db.String(256), index=True)  # type of external authentication system, one of ManagerExtTypeXXXXX
+    ext_auth_id = db.Column(db.String(256), index=True)  # id in external authentication system
+    name = db.Column(db.Text)
+    email = db.Column(db.String(256), index=True, unique=True)
 
     hosts = relationship(
         "ManagedHost",
@@ -38,8 +37,8 @@ class ManagedHost(db.Model):
     """
     __tablename__ = 'managedhost'
     id = db.Column(db.Integer, primary_key=True)
-    uuid = db.Column(db.Text, index=True)
-    hostname = db.Column(db.Text, index=True)
+    uuid = db.Column(db.String(36), index=True)
+    hostname = db.Column(db.String(256), index=True)
 
     users = relationship("ManagedUser", back_populates="host")
     managers = relationship(
@@ -60,8 +59,8 @@ class ManagedUser(db.Model):
     """
     __tablename__ = 'manageduser'
     id = db.Column(db.Integer, primary_key=True)
-    uuid = db.Column(db.Text, index=True)
-    login = db.Column(db.Text, index=True)
+    uuid = db.Column(db.String(36), index=True)
+    login = db.Column(db.String(256), index=True)
 
     host_id = db.Column(db.Integer, db.ForeignKey('managedhost.id'))
     host = relationship("ManagedHost", back_populates="users")
@@ -83,7 +82,7 @@ class TimeOverride(db.Model):
     id = db.Column(db.Integer, primary_key=True)
 
     amount = db.Column(db.Integer)  # amount of time to add to or subtract from current time limit
-    status = db.Column(db.Integer)  # status of this override - i.e. is it applied or queued for apply
+    status = db.Column(db.Integer, index=True)  # status of this override - i.e. is it applied or queued for apply
 
     user_id = db.Column(db.Integer, db.ForeignKey('manageduser.id'))
     user = relationship("ManagedUser", back_populates="timeoverrides")

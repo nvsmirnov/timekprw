@@ -10,13 +10,16 @@ import requests
 import logging
 from logging import debug, info, warning, error
 
-rest_url = "https://nvsbook.h.nvs.pp.ru:5000"
+rest_url = os.environ.get('TIMEKPRW_RESTURL', 'https://timekprw.ew.r.appspot.com')
 sleep = 30
 host_uuid = '59e8368c-7dbc-11ea-923e-7cb0c2957d37'
 
 logging.basicConfig(level=logging.INFO)
 
 info("started")
+if len(os.environ.get('TIMEKPRW_DEBUG', '')):
+    logging.getLogger().setLevel(logging.DEBUG)
+    debug("enabled debug")
 
 class TimekrpwCliException(Exception):
     """Exception raised by timekprw-cli"""
