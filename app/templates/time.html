@@ -1,12 +1,11 @@
 {% extends "base.html" %}
 
 {% block content %}
-    <h1>Time for user {{ username }}</h1>
+    <p>Add time for user {{ username }}</p>
     <form action="" method="post" novalidate>
         {{ form.hidden_tag() }}
         <p>
-            {{ form.amount.label }}<br>
-            {{ form.amount(size=5) }}
+            {{ form.amount.label }}: {{ form.amount(size=5) }}
         </p>
         <p>{{ form.submit() }}</p>
     </form>

@@ -11,7 +11,7 @@ from flask_login import LoginManager, current_user, login_required, login_user, 
 from oauthlib.oauth2 import WebApplicationClient
 import requests
 
-from flaskapp import app, db, models, forms
+from app import app, db, models, forms
 
 import logging
 from logging import debug, info, warning, error
@@ -47,29 +47,17 @@ def load_user(user_id):
 
 @app.route("/")
 def webroot():
-    if not current_user.is_authenticated:
+    if False and not current_user.is_authenticated:
         if os.environ.get('APP_ENVIRONMENT', None) == "dev":
             # TODO: remove this in prod
             user = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
             login_user(user, remember=True)
             return redirect(url_for("webroot"))
-        rv = '<a class="button" href="/login">Google Login</a>'
-        return rv
-    else:
-        rv = f'<p>Hello, {current_user.name}! You\'re logged in! Email: {current_user.email}</p>' \
-             f'<p><a class="button" href="/logout">Logout</a></p>' \
-             f'<p>current_user: {html.escape(repr(current_user))}</p>'
+
+    hosts_with_users = []
+    if current_user.is_authenticated:
         hosts_with_users = [x for x in current_user.hosts if len(x.users)]
-        if not len(hosts_with_users):
-            rv += f'<p>No managed hosts with users found</p>'
-        else:
-            rv += f'<p>Managed hosts and users:</br>'
-            for host in hosts_with_users:
-                rv += f'&nbsp;&nbsp;' + html.escape(str(host)) + "<br>"
-                for user in host.users:
-                    rv += f'&nbsp;&nbsp;&nbsp;&nbsp;<a class="button" href="/time/{str(user.uuid)}">' + html.escape(str(user)) + "</a><br>"
-            rv += '</p>'
-        return rv
+    return render_template('main.html', title='Home', current_user=current_user, hosts_with_users=hosts_with_users)
 
 
 @app.route("/time/<user_uuid>", methods=['GET', 'POST'])
@@ -86,14 +74,13 @@ def time_for_user(user_uuid):
                                        user=user, owner=current_user)
         db.session.add(override)
         db.session.commit()
-        rv = f'Time override added for {user}, amount={amount}<br>'
-        rv += f'<a class="button" href="{url_for("webroot")}">Home</a>'
-        return rv
-    return render_template('time.html', title='Time Override', form=form, username=str(user))
+        return render_template('time_added.html', user=user, amount=amount)
+    else:
+        return render_template('time.html', title='Time Override', form=form, username=str(user))
 
 
 @app.route("/rest/overrides/<host_uuid>")
-def overrides_for_host(host_uuid):
+def rest_overrides_for_host(host_uuid):
     """
     REST: Fetch all time overrides for given host
     Authentication is not required
@@ -115,7 +102,7 @@ def overrides_for_host(host_uuid):
 
 
 @app.route("/rest/overrides_ack/<host_uuid>")
-def overrides_ack_for_host(host_uuid):
+def rest_overrides_ack_for_host(host_uuid):
     """
     REST: Acknowledge time overrides for host.
     Call after applying overrides on host.
@@ -141,11 +128,14 @@ def user():
     """
     Info about currently logged-in user (manager)
     """
-    return f"current_user: {html.escape(str(current_user))}"
+    if os.environ.get('APP_ENVIRONMENT', None) != "dev":
+        abort(404)
+    return f"current_user: <pre>{html.escape(repr(current_user))}</pre>"
 
 
 @app.route("/login")
 def login():
+    """Perform authentication with Google Auth"""
     # Find out what URL to hit for Google login
     google_provider_cfg = get_google_provider_cfg()
     authorization_endpoint = google_provider_cfg["authorization_endpoint"]
@@ -162,6 +152,7 @@ def login():
 
 @app.route("/login/callback")
 def callback():
+    """Callback for Google Auth"""
     # Get authorization code Google sent back to you
     code = request.args.get("code")
 
@@ -208,6 +199,7 @@ def callback():
     # Create a user in your db with the information provided by Google
     user = models.Manager.query.filter_by(ext_auth_id=unique_id, ext_auth_type=models.ExtAuthTypeGoogleAuth).first()
     if user:
+        # update user's data if we already have it
         if user.name != users_name: user.name = users_name
         if user.email != users_email: user.email = users_email
         #if user.picture != picture: user.picture = picture

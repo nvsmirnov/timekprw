@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        {% if title %}
+            <title>{{ title }} - timekprw</title>
+        {% else %}
+            <title>timekprw</title>
+        {% endif %}
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+    <body>
+    <header>
+        <div class="menuline">
+            <div class="menuheader">TimeKprW</div>
+            <div>
+                <div class="menuitems"><a class="menubutton" href="{{ url_for('webroot') }}">Home</a></li></div>
+                <div class="menuitems"><a class="menubutton" href="{{ url_for('logout') }}">Logout</a></li></div>
+            </div>
+        </div>
+    </header>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+    </body>
+</html>
