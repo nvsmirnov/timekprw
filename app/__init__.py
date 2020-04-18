@@ -12,7 +12,10 @@ app.config.from_object(Config)
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
-# how to migrate db (from https://blog.miguelgrinberg.com/post/the-flask-mega-tutorial-part-iv-database):
+# how to migrate db (based on https://blog.miguelgrinberg.com/post/the-flask-mega-tutorial-part-iv-database):
+# set environment variables:
+#   FLASK_APP=main.py
+#   DATABASE_URL
 # ("flask db" is command is added by Flask-Migrate)
 # 1. Create the migration repository. Run it once when created first model, (or before?)
 # flask db init

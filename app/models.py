@@ -31,6 +31,8 @@ class Manager(db.Model, UserMixin):  # UserMixin for flask_login
     def __str__(self):
         return f"{self.ext_auth_type}/{self.email}"
 
+ManagedHostStatusActive = 1
+ManagedHostStatusLocked = 2
 class ManagedHost(db.Model):
     """
     Managed host
@@ -39,6 +41,17 @@ class ManagedHost(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     uuid = db.Column(db.String(36), index=True)
     hostname = db.Column(db.String(256), index=True)
+
+    # time when there was last correctly authenticated request from this host
+    lastauthaccess = db.Column(db.DateTime)
+
+    # pin is used when host added to generate authentication key
+    pin = db.Column(db.String(6))
+    pin_trycount = db.Column(db.Integer)
+    pin_whenset = db.Column(db.DateTime)
+
+    authkey = db.Column(db.String(256))
+    authkey_trycount = db.Column(db.Integer)
 
     users = relationship("ManagedUser", back_populates="host")
     managers = relationship(
