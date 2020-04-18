@@ -1,0 +1,2 @@
+Seems that gcloud deploy skips empty directories, but this directory needed for flask db migrate to work.
+If there are no migrations yet it will show error messages if this directory does not exists.
