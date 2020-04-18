@@ -17,9 +17,13 @@ migrate = Migrate(app, db)
 #   FLASK_APP=main.py
 #   DATABASE_URL
 # ("flask db" is command is added by Flask-Migrate)
-# 1. Create the migration repository. Run it once when created first model, (or before?)
-# flask db init
-# 2. Create migration scripts. Every time when model changes:
-# flask db migrate -m "Message"
-# 3. Upgrade database:
-# flask db upgrade
+
+# Overall process:
+#   1. Create the migration repository. Run it once when created first model, (or before?)
+#      flask db init
+#   2. Create migration scripts. Every time when model changes:
+#      flask db migrate -m "Message"
+#   3. Upgrade database (this app should do upgrades in-place):
+#      flask db upgrade
+
+# to look from DB's perspective what version it is now: select * from alembic_version

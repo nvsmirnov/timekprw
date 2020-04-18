@@ -1,3 +1,7 @@
+#
+# WARNING! Don't forget to do fask db migrate after changing models!
+#
+
 from app import db
 from flask_login import UserMixin
 from sqlalchemy.orm import relationship
