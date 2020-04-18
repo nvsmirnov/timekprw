@@ -11,7 +11,7 @@ from flask_login import LoginManager, current_user, login_required, login_user, 
 from oauthlib.oauth2 import WebApplicationClient
 import requests
 
-from app import app, db, models, forms, migratemanager
+from app import app, db, models, forms
 
 import logging
 from logging import debug, info, warning, error
@@ -239,6 +239,16 @@ def logout():
 
 
 def dumpdata():
+    if logging.getLogger().level <= logging.DEBUG:
+        # the use of this function is really dangerous because it reads all DB at once
+        # if DB is large (on production) there will be a problem
+        # even if we use it like debug(dumpdata) - when debug is disabled, dumpdata will read all data anyway.
+        # so probably if someone enabled debug he
+        #   a) probably will not do this on large production DB;
+        #   b) understands what he doing
+        # anyway all this dumping requires rewrite to not to read all data into memory at once.
+        return("Refused to dump data when debug is disabled")
+
     debug("called dumpdata()")
     rv=''
     rv += 'Managers:\n'
@@ -269,14 +279,33 @@ def dumpdata():
     return rv
 
 
+def dbupgrade():
+    try:
+        info(f"in dbupgrade(): started")
+        from flask_script import Manager
+        from flask_migrate import MigrateCommand
+        migratemanager = Manager(app)
+        sys.argv = ['flask', 'db', 'upgrade']  # some hacking
+        migratemanager.run({'db': MigrateCommand})
+    except Exception as e:
+        error(f"in dbupgrade(): got exception: {e} (enable debug for more)")
+        debug(f"in dbupgrade(): exception follows:", exc_info=True)
+
+
 @app.before_first_request
 def app_init():
-
-    # try to perform migration
+    # try to perform DB migration
+    # did not found another the way to automate this on GCP
     try:
-        migratemanager.run()
+        from multiprocessing import Process
+        p = Process(target=dbupgrade)
+        info(f"starting dbupgrade in child process")
+        p.start()
+        info(f"waiting for dbupgrade to finish")
+        p.join()
+        info(f"dbupgrade finished")
     except Exception as e:
-        error(f"Failed to run migratemanager: {e} (enable debug for more)")
+        error(f"Failed to run dbupgrade: {e} (enable debug for more)")
         debug("exception follows:", exc_info=True)
 
     debug("running db.create_all()")
