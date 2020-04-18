@@ -11,7 +11,7 @@ from flask_login import LoginManager, current_user, login_required, login_user, 
 from oauthlib.oauth2 import WebApplicationClient
 import requests
 
-from app import app, db, models, forms
+from app import app, db, models, forms, migratemanager
 
 import logging
 from logging import debug, info, warning, error
@@ -85,12 +85,17 @@ def rest_overrides_for_host(host_uuid):
     REST: Fetch all time overrides for given host
     Authentication is not required
     :param host_uuid:
-    :return: hash: { login: amount, ... }
+    :return:
+    {
+        success: "true"|"false",
+        message: "Cause of problem if success=false" (optional),
+        overrides: { login1: amount, login2: amount, ... }
+    }
     """
     validate_uuid(host_uuid)
     host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
     if not host:
-        abort(404, 'No host found with given id')
+        return {"success": False, "message": "No host found with given id"}
     overrides = {}
     for user in host.users:
         for override in [x for x in user.timeoverrides if x.status == models.TimeOverrideStatusQueued]:
@@ -98,7 +103,7 @@ def rest_overrides_for_host(host_uuid):
             if login not in overrides:
                 overrides[login] = 0
             overrides[login] += override.amount
-    return overrides
+    return {"success": True, "overrides": overrides}
 
 
 @app.route("/rest/overrides_ack/<host_uuid>")
@@ -112,14 +117,16 @@ def rest_overrides_ack_for_host(host_uuid):
     validate_uuid(host_uuid)
     host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
     if not host:
-        abort(404, 'No host found with given id')
+        return {"success": False, "message": "No host found with given id"}
     for user in host.users:
+        # clean older overrides
         for override in [x for x in user.timeoverrides if x.status != models.TimeOverrideStatusQueued]:
             db.session.delete(override)
+        # change status of last override
         for override in [x for x in user.timeoverrides if x.status == models.TimeOverrideStatusQueued]:
             override.status = models.TimeOverrideStatusApplied
     db.session.commit()
-    return { 'success': True }
+    return {'success': True}
 
 
 @app.route("/user")
@@ -264,9 +271,18 @@ def dumpdata():
 
 @app.before_first_request
 def app_init():
+
+    # try to perform migration
+    try:
+        migratemanager.run()
+    except Exception as e:
+        error(f"Failed to run migratemanager: {e} (enable debug for more)")
+        debug("exception follows:", exc_info=True)
+
     debug("running db.create_all()")
     db.create_all()
     debug("done db.create_all()")
+
 
     if os.environ.get('APP_ENVIRONMENT', None) == "dev":
 
