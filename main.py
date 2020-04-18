@@ -239,7 +239,7 @@ def logout():
 
 
 def dumpdata():
-    if logging.getLogger().level <= logging.DEBUG:
+    if logging.getLogger().level > logging.DEBUG:
         # the use of this function is really dangerous because it reads all DB at once
         # if DB is large (on production) there will be a problem
         # even if we use it like debug(dumpdata) - when debug is disabled, dumpdata will read all data anyway.
