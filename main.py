@@ -249,7 +249,6 @@ def dumpdata():
         # anyway all this dumping requires rewrite to not to read all data into memory at once.
         return("Refused to dump data when debug is disabled")
 
-    debug("called dumpdata()")
     rv=''
     rv += 'Managers:\n'
     for manager in models.Manager.query.all():
@@ -275,7 +274,6 @@ def dumpdata():
                 rv += f"      - {repr(user)}\n"
                 for timeoverride in user.timeoverrides:
                     rv += f"        - {repr(timeoverride)}\n"
-    debug("returning from dumpdata()")
     return rv
 
 
