@@ -3,8 +3,14 @@
 #
 
 from app import db
+from app.exceptions import *
+
+import datetime
+import random
+
 from flask_login import UserMixin
 from sqlalchemy.orm import relationship
+from sqlalchemy.ext.hybrid import hybrid_property
 
 association_Manager_ManagedHost = db.Table(
     'association_manager_managedhost', db.metadata,
@@ -35,8 +41,6 @@ class Manager(db.Model, UserMixin):  # UserMixin for flask_login
     def __str__(self):
         return f"{self.ext_auth_type}/{self.email}"
 
-ManagedHostStatusActive = 1
-ManagedHostStatusLocked = 2
 class ManagedHost(db.Model):
     """
     Managed host
@@ -50,12 +54,13 @@ class ManagedHost(db.Model):
     lastauthaccess = db.Column(db.DateTime)
 
     # pin is used when host added to generate authentication key
-    pin = db.Column(db.String(6))
-    pin_trycount = db.Column(db.Integer)
+    _pin = db.Column('pin', db.String(6))
     pin_whenset = db.Column(db.DateTime)
 
     authkey = db.Column(db.String(256))
     authkey_trycount = db.Column(db.Integer)
+
+    auth_lastsuccess = db.Column(db.DateTime)
 
     users = relationship("ManagedUser", back_populates="host")
     managers = relationship(
@@ -68,6 +73,40 @@ class ManagedHost(db.Model):
         return f"<ManagedHost id:{self.id}, uuid:{self.uuid}, hostname:{self.hostname}>"
     def __str__(self):
         return f"{self.hostname}"
+
+    @hybrid_property
+    def pin(self):
+        return self._pin
+
+    @pin.setter
+    def pin(self, value):
+        self._pin = value
+        self.pin_whenset = datetime.datetime.utcnow()
+
+    def pin_generate(self):
+        # check if we have too many hosts with pin set and remove some of them to avoid collisions
+        hosts_pending = ManagedHost.query. \
+            filter(ManagedHost.pin != None). \
+            order_by(ManagedHost.pin_whenset).all()  # TODO: that should be dangerous
+        while len(hosts_pending) > 1: # TODO: change to 999 when tested
+            popped = hosts_pending.pop(0)
+            popped.pin = None;
+        while True:
+            pin = ''.join(random.choice('0123456789') for x in range(6))
+            if not ManagedHost.query.filter_by(pin=pin).first():
+                # ok, there is no such pin yet
+                break
+        self.pin = pin
+
+    def checkpin(self, pin):
+        if pin != self.pin:
+            # TODO: check pin age and reset it if it is too old
+            return False
+        else:
+            return True
+
+    def checkauth(self, authkey):
+        raise TimekprwException('Authentication not implemented yet')
 
 
 class ManagedUser(db.Model):

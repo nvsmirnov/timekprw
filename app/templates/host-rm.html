@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+    {% if not host %}
+        Unknown host
+    {% else %}
+        <h1>Pleas confirm</h1>
+        <p>Do you wish to remove host {{ host.hostname|e }}?</p>
+        <p>
+            Managers:<br>
+            {% for manager in host.managers %}
+            &nbsp;&nbsp;{{ manager.email }} <a href="{{ url_for('ui_host_manager_rm', host_uuid=host.uuid, manager_id=manager.id) }}">(remove)</a><br>
+            {% endfor %}
+        </p>
+        {% if host.users|length > 0 %}
+            Users:<br>
+            {% for user in host.users %}
+                &nbsp;&nbsp;{{ user.login|e }} <a href="{{ url_for('ui_host_user_rm', host_uuid=host.uuid, user_id=user.id) }}">(remove)</a><br>
+            {% endfor %}
+        {% else %}
+            No users defined for this host
+        {% endif %}
+        <p>
+        <form action="" method="post" novalidate>
+            {{ form.hidden_tag() }}
+            {{ form.submit() }}
+        </form>
+        </p>
+        <p>
+            <a class="button" href="{{ url_for('ui_host', host_uuid=host.uuid) }}">No, take me back</a><br>
+        </p>
+    {% endif %}
+{% endblock %}

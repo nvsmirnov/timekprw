@@ -98,7 +98,7 @@ try:
                     error(str(e))
             # acknowledge that we've got data
             debug("send ack to server")
-            rest(url=f"/rest/overrides_ack/{host_uuid}", type="GET")
+            rest(url=f"/rest/overrides-ack/{host_uuid}", type="GET")
         except TimekrpwCliException as e:
             error(str(e))
         debug(f"sleeping for {sleep} seconds...")

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block content %}
+    <p>Add user from host {{ host.hostname|e }}</p>
+    <p>
+        Current users:<br>
+        {% for user in host.users %}
+        &nbsp;&nbsp;{{ user.login|e }}<br>
+        {% endfor %}
+    </p>
+    <form action="" method="post" novalidate>
+        {{ form.hidden_tag() }}
+        <p>
+            {{ form.login.label }}: {{ form.login(size=32) }}
+        </p>
+        <p>{{ form.submit() }}</p>
+    </form>
+{% endblock %}

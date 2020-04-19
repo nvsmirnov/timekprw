@@ -12,6 +12,7 @@ from oauthlib.oauth2 import WebApplicationClient
 import requests
 
 from app import app, db, models, forms
+from app.exceptions import *
 
 import logging
 from logging import debug, info, warning, error
@@ -31,10 +32,30 @@ login_manager.init_app(app)
 
 
 def validate_uuid(uuid_str):
+    """Check uuid for syntax and return lower case, or abort. Use as obj_uuid=validate_uuid(obj_uuid)"""
     try:
-        uuid.UUID(uuid_str)
+        s = str(uuid.UUID(uuid_str))
+        return s.lower()
     except ValueError:
-        abort(404, 'Invalid uuid given: {user_uuid}')
+        abort(403, f'Invalid uuid given: {html.escape(user_uuid)}')
+
+
+
+def new_host_uuid():
+    # TODO: this is subject to race condition, but chances are very unlikely
+    while True:
+        newuuid = str(uuid.uuid1()).lower()
+        if not models.ManagedHost.query.filter_by(uuid=newuuid).first():
+            return newuuid
+
+
+def new_user_uuid():
+    # TODO: this is subject to race condition, but chances are very unlikely
+    while True:
+        newuuid=str(uuid.uuid1()).lower()
+        if not models.ManagedUser.query.filter_by(uuid=newuuid).first():
+            return newuuid
+
 
 def get_google_provider_cfg():
     return requests.get(GOOGLE_DISCOVERY_URL).json()
@@ -47,26 +68,187 @@ def load_user(user_id):
 
 @app.route("/")
 def webroot():
-    if False and not current_user.is_authenticated:
+    if not current_user.is_authenticated:
         if os.environ.get('APP_ENVIRONMENT', None) == "dev":
             # TODO: remove this in prod
             user = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
             login_user(user, remember=True)
             return redirect(url_for("webroot"))
 
-    hosts_with_users = []
-    if current_user.is_authenticated:
-        hosts_with_users = [x for x in current_user.hosts if len(x.users)]
-    return render_template('main.html', title='Home', current_user=current_user, hosts_with_users=hosts_with_users)
+    return render_template('main.html', title='Home', current_user=current_user)
+
+
+@app.route("/host/<host_uuid>")
+@login_required
+def ui_host(host_uuid):
+    host_uuid = validate_uuid(host_uuid)
+    host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
+    return render_template(
+        'host.html',
+        title='Unknown host' if not host else host.hostname,
+        host=host
+    )
+
+
+@app.route("/host-add", methods=['GET', 'POST'])
+@login_required
+def ui_host_add():
+    try:
+        form = forms.HostAddForm()
+        if form.validate_on_submit():
+            hostname = form.hostname.data
+            if not re.match('^[\w\-\.\ ]+$', hostname):
+                abort(403, "Bad symbols in hostname")
+            for host in current_user.hosts:
+                if hostname.lower() == host.hostname.lower():
+                    abort(403, f"Host {html.escape(hostname)} already exists among your hosts")
+            host=models.ManagedHost(hostname=hostname, uuid=new_host_uuid())
+            db.session.add(host)
+            current_user.hosts.append(host)
+            host.pin_generate()
+            db.session.commit()
+            return render_template('host.html', title=host.hostname, host=host)
+        else:
+            return render_template('host-add.html', title='Add host', form=form)
+    except TimekprwException as e:
+        debug("exception:", exc_info=True)
+        abort(403, str(e))
+
+
+@app.route("/host-rm/<host_uuid>", methods=['GET', 'POST'])
+@login_required
+def ui_host_rm(host_uuid):
+    host_uuid = validate_uuid(host_uuid)
+    host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
+    if not host or current_user not in host.managers:
+        abort(403, 'No host found with given id and managed by you')
+    form = forms.HostRemoveForm()
+    if form.validate_on_submit():
+        db.session.remove(host)
+        db.session.commit()
+        return redirect(url_for("webroot"))
+    else:
+        return render_template('host-rm.html', title=f'Confirm remove {host.hostname}', host=host, form=form)
+
+
+@app.route("/host-set-pin/<host_uuid>", methods=['GET'])
+@login_required
+def ui_host_set_pin(host_uuid):
+    """Clear authetication key and set pin"""
+    host_uuid = validate_uuid(host_uuid)
+    host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
+    if not host or current_user not in host.managers:
+        abort(403, 'No host found with given id and managed by you')
+    host.authkey = None
+    host.pin_generate()
+    db.session.commit()
+    return render_template('host.html', title=host.hostname, host=host)
+
+
+@app.route("/host-deactivate/<host_uuid>", methods=['GET'])
+@login_required
+def ui_host_deactivate(host_uuid):
+    """Clear authentication token and pin"""
+    host_uuid = validate_uuid(host_uuid)
+    host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
+    if not host or current_user not in host.managers:
+        abort(403, 'No host found with given id and managed by you')
+    host.pin = None
+    host.authkey = None
+    db.session.commit()
+    return render_template('host.html', title=host.hostname, host=host)
+
+
+@app.route("/host-manager-add/<host_uuid>", methods=['GET', 'POST'])
+@login_required
+def ui_host_manager_add(host_uuid):
+    host_uuid = validate_uuid(host_uuid)
+    host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
+    if not host or current_user not in host.managers:
+        abort(403, 'No host found with given id and managed by you')
+    form = forms.HostAddManagerForm()
+    if form.validate_on_submit():
+        email = form.email.data
+        manager = models.Manager.query.filter(models.Manager.email.ilike(email)).first()
+        if manager:
+            if host in manager.hosts:
+                abort(403, f"Host already managed by {html.escape(email)}")
+        else:
+            manager = models.Manager(email=email)
+            db.session.add(manager)
+        manager.hosts.append(host)
+        db.session.commit()
+        return redirect(url_for("ui_host", host_uuid=host_uuid))
+    else:
+        return render_template('host-manager-add.html', title=f'Add manager for {host.hostname}', host=host, form=form)
+
+
+@app.route("/host-manager-rm/<host_uuid>/<manager_id>", methods=['GET', 'POST'])
+@login_required
+def ui_host_manager_rm(host_uuid, manager_id):
+    host_uuid = validate_uuid(host_uuid)
+    host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
+    if not host or current_user not in host.managers:
+        abort(403, 'No host found with given id and managed by you')
+    manager = models.Manager.query.filter_by(id=manager_id).first()
+    if not manager:
+        abort(403, 'Did not find such manager')
+    if manager == current_user:
+        abort(403, 'You cannot remove yourself from managers list')
+    if manager not in host.managers:
+        abort(403, 'This manager does not manage this host')
+    host.managers.remove(manager)
+    db.session.commit()
+    return redirect(url_for("ui_host", host_uuid=host_uuid))
+
+
+@app.route("/host-user-add/<host_uuid>", methods=['GET', 'POST'])
+@login_required
+def ui_host_user_add(host_uuid):
+    host_uuid = validate_uuid(host_uuid)
+    host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
+    if not host or current_user not in host.managers:
+        abort(403, 'No host found with given id and managed by you')
+    form = forms.HostAddUserForm()
+    if form.validate_on_submit():
+        login = form.login.data
+        # TODO: don't know how to query for users of this host with such login name
+        existing = [x for x in host.users if x.login.lower() == login.lower()]
+        if len(existing):
+            abort(403, f"User {login} already exists on host {host.hostname}")
+        user = models.ManagedUser(uuid=new_user_uuid(), login=login)
+        db.session.add(user)
+        host.users.append(user)
+        db.session.commit()
+        return redirect(url_for("ui_host", host_uuid=host_uuid))
+    else:
+        return render_template('host-user-add.html', title=f'Add user on {host.hostname}', host=host, form=form)
+
+
+@app.route("/host-user-rm/<host_uuid>/<user_id>", methods=['GET', 'POST'])
+@login_required
+def ui_host_user_rm(host_uuid, user_id):
+    host_uuid = validate_uuid(host_uuid)
+    host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
+    if not host or current_user not in host.managers:
+        abort(403, 'No host found with given id and managed by you')
+    user = models.ManagedUser.query.filter_by(id=user_id).first()
+    if not user:
+        abort(403, 'Did not find such user')
+    if user.host != host:
+        abort(403, 'This user does not belong to this host')
+    host.users.remove(user)
+    db.session.commit()
+    return redirect(url_for("ui_host", host_uuid=host_uuid))
 
 
 @app.route("/time/<user_uuid>", methods=['GET', 'POST'])
 @login_required
-def time_for_user(user_uuid):
-    validate_uuid(user_uuid)
+def ui_time(user_uuid):
+    user_uuid = validate_uuid(user_uuid)
     user = models.ManagedUser.query.filter_by(uuid=user_uuid).first()
     if not user or current_user not in user.host.managers:
-        abort(404, 'No user found with given id and managed by you')
+        abort(403, 'No user found with given id and managed by you')
     form = forms.TimeForm(useruuid=user_uuid, username=str(user))
     if form.validate_on_submit():
         amount = form.amount.data
@@ -80,7 +262,7 @@ def time_for_user(user_uuid):
 
 
 @app.route("/rest/overrides/<host_uuid>")
-def rest_overrides_for_host(host_uuid):
+def rest_overrides(host_uuid):
     """
     REST: Fetch all time overrides for given host
     Authentication is not required
@@ -92,7 +274,7 @@ def rest_overrides_for_host(host_uuid):
         overrides: { login1: amount, login2: amount, ... }
     }
     """
-    validate_uuid(host_uuid)
+    host_uuid = validate_uuid(host_uuid)
     host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
     if not host:
         return {"success": False, "message": "No host found with given id"}
@@ -106,15 +288,15 @@ def rest_overrides_for_host(host_uuid):
     return {"success": True, "overrides": overrides}
 
 
-@app.route("/rest/overrides_ack/<host_uuid>")
-def rest_overrides_ack_for_host(host_uuid):
+@app.route("/rest/overrides-ack/<host_uuid>")
+def rest_overrides_ack(host_uuid):
     """
     REST: Acknowledge time overrides for host.
     Call after applying overrides on host.
     :param host_uuid:
     :return: { success: True }
     """
-    validate_uuid(host_uuid)
+    host_uuid = validate_uuid(host_uuid)
     host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
     if not host:
         return {"success": False, "message": "No host found with given id"}
@@ -131,7 +313,7 @@ def rest_overrides_ack_for_host(host_uuid):
 
 @app.route("/user")
 @login_required
-def user():
+def ui_user():
     """
     Info about currently logged-in user (manager)
     """
@@ -158,7 +340,7 @@ def login():
 
 
 @app.route("/login/callback")
-def callback():
+def login_callback():
     """Callback for Google Auth"""
     # Get authorization code Google sent back to you
     code = request.args.get("code")
@@ -222,7 +404,7 @@ def callback():
 
 @app.route("/dump")
 @login_required
-def dump():
+def ui_dump():
     """
     Dump all known data
     """
@@ -318,13 +500,13 @@ def app_init():
         else:
             debug("creating dev objects")
 
-            host1 = models.ManagedHost(uuid=str(uuid.uuid1()), hostname='testhost.tld')
+            host1 = models.ManagedHost(uuid=new_host_uuid(), hostname='testhost.tld')
             db.session.add(host1)
-            host2 = models.ManagedHost(uuid=str(uuid.uuid1()), hostname='otherhost.dom')
+            host2 = models.ManagedHost(uuid=new_host_uuid(), hostname='otherhost.dom')
             db.session.add(host2)
-            user1 = models.ManagedUser(uuid=str(uuid.uuid1()), login="testuser1", host=host1)
+            user1 = models.ManagedUser(uuid=new_user_uuid(), login="testuser1", host=host1)
             db.session.add(user1)
-            user2 = models.ManagedUser(uuid=str(uuid.uuid1()), login="testuser2", host=host1)
+            user2 = models.ManagedUser(uuid=new_user_uuid(), login="testuser2", host=host1)
             db.session.add(user2)
             manager1 = models.Manager()
             manager1.hosts.append(host1)
@@ -341,7 +523,7 @@ def app_init():
     if not host:
         debug("creating host")
         host = models.ManagedHost(uuid=str(uuid.UUID('59e8368c-7dbc-11ea-923e-7cb0c2957d37')), hostname='john')
-        user = models.ManagedUser(uuid=str(uuid.uuid1()), login='rightrat', host=host)
+        user = models.ManagedUser(uuid=new_user_uuid(), login='rightrat', host=host)
         db.session.add(user)
         db.session.add(host)
     manager1 = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()

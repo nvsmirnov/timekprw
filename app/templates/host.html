@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block content %}
+    {% if not host %}
+        Unknown host
+    {% else %}
+        <p>Host {{ host.hostname|e }}</p>
+        <p>
+            {% if not host.authkey %}
+                Host is not active yet<br>
+                {% if not host.pin %}
+                    No access pin is set.
+                    <a class="button" href="{{ url_for('ui_host_set_pin', host_uuid=host.uuid) }}">Set access pin</a><br>
+                {% else %}
+                    Access pin is {{ host.pin }}. Use it on the client host to activate it.<br>
+                    <a class="button" href="{{ url_for('ui_host_deactivate', host_uuid=host.uuid) }}">Deactivate host</a><br>
+                {% endif %}
+            {% else %}
+                {% if not host.auth_lastsuccess %}
+                    Host is activated but still not online.<br>
+                    You may recreate access pin to re-add host:
+                    <a class="button" href="{{ url_for('ui_host_set_pin', host_uuid=host.uuid) }}">Set access pin</a><br>
+                {% else %}
+                    Host is active. Last seen: {{ host.auth_lastsuccess|e }}<br>
+                    <a class="button" href="{{ url_for('ui_host_deactivate', host_uuid=host.uuid) }}">Deactivate host</a><br>
+                {% endif %}
+            {% endif %}
+        </p>
+        <p>
+            Managers:<br>
+            {% for manager in host.managers %}
+            &nbsp;&nbsp;{{ manager.email }} <a href="{{ url_for('ui_host_manager_rm', host_uuid=host.uuid, manager_id=manager.id) }}">(remove)</a><br>
+            {% endfor %}
+        </p>
+        {% if host.users|length > 0 %}
+            Users:<br>
+            {% for user in host.users %}
+                &nbsp;&nbsp;{{ user.login|e }} <a href="{{ url_for('ui_host_user_rm', host_uuid=host.uuid, user_id=user.id) }}">(remove)</a><br>
+            {% endfor %}
+        {% else %}
+            No users defined for this host
+        {% endif %}
+        <p>
+            <a class="button" href="{{ url_for('ui_host_user_add', host_uuid=host.uuid) }}">Add user</a>
+            <a class="button" href="{{ url_for('ui_host_manager_add', host_uuid=host.uuid) }}">Add manager</a>
+        </p>
+        <p>
+            <a class="button" href="{{ url_for('ui_host_rm', host_uuid=host.uuid) }}">Remove host</a>
+        </p>
+    {% endif %}
+{% endblock %}
