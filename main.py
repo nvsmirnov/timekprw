@@ -1,3 +1,7 @@
+#
+# TODO: add host with pin, generate authkey, rest authentication
+#
+
 import os
 import sys
 import html
