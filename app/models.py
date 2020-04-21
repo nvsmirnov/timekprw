@@ -7,10 +7,14 @@ from app.exceptions import *
 
 import datetime
 import random
+import string
+from passlib.hash import pbkdf2_sha512
 
 from flask_login import UserMixin
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
+
+from logging import debug, info, warning, error
 
 association_Manager_ManagedHost = db.Table(
     'association_manager_managedhost', db.metadata,
@@ -54,7 +58,7 @@ class ManagedHost(db.Model):
     lastauthaccess = db.Column(db.DateTime)
 
     # pin is used when host added to generate authentication key
-    _pin = db.Column('pin', db.String(6))
+    _pin = db.Column('pin', db.String(6), index=True)
     pin_whenset = db.Column(db.DateTime)
 
     authkey = db.Column(db.String(256))
@@ -99,14 +103,42 @@ class ManagedHost(db.Model):
         self.pin = pin
 
     def checkpin(self, pin):
+        # there was a thought to add some more logic to that, but evetually it reduced to this :)
         if pin != self.pin:
-            # TODO: check pin age and reset it if it is too old
             return False
         else:
             return True
 
-    def checkauth(self, authkey):
-        raise TimekprwException('Authentication not implemented yet')
+    def authkey_check(self, authkey):
+        """
+        Check authkey, return True or False
+        may raise TimekprwException
+        Performs DB commit
+        """
+        try:
+            if not self.authkey:
+                return False
+            rv = pbkdf2_sha512.verify(authkey, self.authkey)
+            if not rv:
+                if self.authkey_trycount is None:
+                    self.authkey_trycount = 0
+                self.authkey_trycount += 1
+            else:
+                self.auth_lastsuccess = datetime.datetime.utcnow()
+            db.session.commit()
+            return rv
+        except Exception as e:
+            debug(f'got exception in authkey_check: {e}, trace follows:', exc_info=True)
+            raise TimekprwException('Failed to check authkey')
+
+    def authkey_generate(self):
+        """
+        Generaty authkey, return list: [authkey_plain, authkey_hash]
+        authkey_salt and authkey_hash are to be stored in DB, authkey_plain is to be returned to the REST client
+        """
+        authkey_plain = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(64))
+        authkey_hash = pbkdf2_sha512.hash(authkey_plain)
+        return [authkey_plain, authkey_hash]
 
 
 class ManagedUser(db.Model):

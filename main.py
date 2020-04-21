@@ -1,5 +1,5 @@
 #
-# TODO: add host with pin, generate authkey, rest authentication
+# TODO: after posting UI forms there is an option to user to send form again on page reload, need to change it
 #
 
 import os
@@ -41,8 +41,7 @@ def validate_uuid(uuid_str):
         s = str(uuid.UUID(uuid_str))
         return s.lower()
     except ValueError:
-        abort(403, f'Invalid uuid given: {html.escape(user_uuid)}')
-
+        abort(403, f'Invalid uuid given: {html.escape(uuid_str)}')
 
 
 def new_host_uuid():
@@ -128,7 +127,7 @@ def ui_host_rm(host_uuid):
         abort(403, 'No host found with given id and managed by you')
     form = forms.HostRemoveForm()
     if form.validate_on_submit():
-        db.session.remove(host)
+        db.session.delete(host)
         db.session.commit()
         return redirect(url_for("webroot"))
     else:
@@ -146,7 +145,7 @@ def ui_host_set_pin(host_uuid):
     host.authkey = None
     host.pin_generate()
     db.session.commit()
-    return render_template('host.html', title=host.hostname, host=host)
+    return redirect(url_for('ui_host', host_uuid=host_uuid))
 
 
 @app.route("/host-deactivate/<host_uuid>", methods=['GET'])
@@ -160,7 +159,7 @@ def ui_host_deactivate(host_uuid):
     host.pin = None
     host.authkey = None
     db.session.commit()
-    return render_template('host.html', title=host.hostname, host=host)
+    return redirect(url_for('ui_host', host_uuid=host_uuid))
 
 
 @app.route("/host-manager-add/<host_uuid>", methods=['GET', 'POST'])
@@ -265,11 +264,74 @@ def ui_time(user_uuid):
         return render_template('time.html', title='Time Override', form=form, username=str(user))
 
 
-@app.route("/rest/overrides/<host_uuid>")
+def rest_check_auth(host, data):
+    """
+    Check authentication
+    :param data: request json
+    :return: { "success": True|False (result), "message": message to the client}
+    """
+    try:
+        if "authkey" not in data:
+            return {"success": False, "message": "To auth key provided"}
+        if host.authkey_check(data["authkey"]):
+            return {"success": True}
+        else:
+            return {"success": False, "message": "Authentication failed"}
+    except Exception as e:
+        debug(f"got exception {e} in rest_check_auth, trace follows:", exc_info=True)
+        return {"success": False, "message": "Internal authentication error"}
+
+
+@app.route("/rest/host-getauthkey", methods=['POST'])
+def rest_host_getauthkey():
+    """
+    REST: add host with pin and return auth key to clien
+    Authentication is not required
+    :param
+    {
+        pin: "nnnnnn"
+    }
+    :return:
+    {
+        success: "true"|"false",
+        message: "Cause of problem if success=false" (optional),
+        authkey: assigned authentication key for future authentication
+        hostuuid: host uuid
+    }
+    """
+    rv = {"success": False, "message": "Internal error: message is not defined"}
+    data = request.get_json()
+    if not data:
+        return {**rv, "message": "json data expected"}
+    if "pin" in data:
+        # TODO: this implementation can be brute-forced
+        #       what we can do is to require some proof of work from the client
+        pin = str(data["pin"])
+        hostqry = models.ManagedHost.query.filter_by(pin=pin)
+        count = hostqry.count()
+        if count == 0:
+            return {**rv, "message": "Please provide correct pin, or obtain new pin from server"}
+        if count > 1:
+            return {**rv, "message": "Internal error, please get another pin and come back"}
+        if count != 1:
+            return {**rv, "message":
+                f"Internal error on server, please report to developer: count={count} and it is not 0,1,>1"}
+        host = hostqry.first()
+        (authkey_plain, authkey_hash) = host.authkey_generate()
+        host.authkey = authkey_hash
+        host.authkey_trycount = 0
+        host.pin = None
+        db.session.commit()
+        return {"success": True, "authkey": authkey_plain, "hostuuid": host.uuid}
+    else:  # "pin" is not in data
+        return {**rv, "message": "pin expected"}
+    return {**rv}
+
+
+@app.route("/rest/overrides/<host_uuid>", methods=['POST'])
 def rest_overrides(host_uuid):
     """
     REST: Fetch all time overrides for given host
-    Authentication is not required
     :param host_uuid:
     :return:
     {
@@ -278,10 +340,20 @@ def rest_overrides(host_uuid):
         overrides: { login1: amount, login2: amount, ... }
     }
     """
+    rv = {"success": False, "message": "Internal error: message is not defined"}
+
     host_uuid = validate_uuid(host_uuid)
     host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
     if not host:
-        return {"success": False, "message": "No host found with given id"}
+        return {**rv, "message": "No host found with given id"}
+
+    data = request.get_json()
+    if not data:
+        return {**rv, "message": "json data expected"}
+    auth_result = rest_check_auth(host, data)
+    if not auth_result["success"]:
+        return auth_result
+
     overrides = {}
     for user in host.users:
         for override in [x for x in user.timeoverrides if x.status == models.TimeOverrideStatusQueued]:
@@ -292,7 +364,7 @@ def rest_overrides(host_uuid):
     return {"success": True, "overrides": overrides}
 
 
-@app.route("/rest/overrides-ack/<host_uuid>")
+@app.route("/rest/overrides-ack/<host_uuid>", methods=["POST"])
 def rest_overrides_ack(host_uuid):
     """
     REST: Acknowledge time overrides for host.
@@ -300,10 +372,20 @@ def rest_overrides_ack(host_uuid):
     :param host_uuid:
     :return: { success: True }
     """
+    rv = {"success": False, "message": "Internal error: message is not defined"}
+
     host_uuid = validate_uuid(host_uuid)
     host = models.ManagedHost.query.filter_by(uuid=host_uuid).first()
     if not host:
-        return {"success": False, "message": "No host found with given id"}
+        return {**rv, "message": "No host found with given id"}
+
+    data = request.get_json()
+    if not data:
+        return {**rv, "message": "json data expected"}
+    auth_result = rest_check_auth(host, data)
+    if not auth_result["success"]:
+        return auth_result
+
     for user in host.users:
         # clean older overrides
         for override in [x for x in user.timeoverrides if x.status != models.TimeOverrideStatusQueued]:
