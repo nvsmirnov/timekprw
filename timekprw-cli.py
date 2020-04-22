@@ -18,6 +18,9 @@ ENVNAME_TIMEKPRW_DEBUG   = 'TIMEKPRW_DEBUG'
 ENVNAME_TIMEKPRW_CREDS   = 'TIMEKPRW_CREDS'
 ENVNAME_TIMEKPRW_RESTURL = 'TIMEKPRW_RESTURL'
 
+systemd_service_name = f'timekprw-cli'
+systemd_service_file = f'/etc/systemd/system/{systemd_service_name}.service'
+
 credentials_path = os.environ.get(ENVNAME_TIMEKPRW_CREDS, '/var/lib/timekprw-cli/timekprw-cli.conf')
 rest_url = os.environ.get(ENVNAME_TIMEKPRW_RESTURL, 'https://timekprw.ew.r.appspot.com')
 
@@ -57,8 +60,7 @@ def rest(url, type, data=None, required_members=None):
     try:
         answer = response.json()
     except Exception as e:
-        debug(f'Failed to interpret server answer as json, got exception {type(e).__name__}({e}), "'
-              f'trace follows:', exc_info=True)
+        debug(f'Got exception:', exc_info=True)
         raise TimekrpwCliException(f'Failed to interpret server answer as json from {url}')
     debug(f'Got json answer from {url}: {answer}')
     # TODO: test all of following
@@ -76,6 +78,36 @@ def rest(url, type, data=None, required_members=None):
             if member not in answer:
                 raise TimekrpwCliException(f"No '{member}' in server answer from {url}")
     return answer
+
+
+def run_cmd(cmd=[], check_status=True, show_output_on_error=True, grab_stderr=True, exit_on_error=False):
+    """
+    Run command with subprocess.run and return it's returned value if success
+    Will raise TimekrpwCliException if conditions not met
+    """
+    try:
+        try:
+            debug(f"running {cmd}")
+            errto = None if not grab_stderr else subprocess.STDOUT
+            subp = subprocess.run(cmd, input='', stdout=subprocess.PIPE, stderr=errto)
+        except Exception as e:
+            debug(f"Got exception:", exc_info=True)
+            raise TimekrpwCliException(f"Failed to run {' '.join(cmd)}: {type(e).__name__}({e})")
+        debug(f"command {cmd} exited with status {subp.returncode}")
+        debug(f"output: {subp.stdout}")
+        if check_status:
+            if subp.returncode != 0:
+                err_str = f"Command {' '.join(cmd)} exited with return code {subp.returncode}"
+                if show_output_on_error:
+                    err_str += f"\nCommand output follows:\n{subp.stdout.decode()}".rstrip()
+                raise TimekrpwCliException(err_str)
+    except TimekrpwCliException as e:
+        if exit_on_error:
+            error(e)
+            sys.exit(1)
+        else:
+            raise e
+    return subp
 
 
 def parse_args():
@@ -97,6 +129,10 @@ def parse_args():
                         help=f'Enable debugging output (also used from {ENVNAME_TIMEKPRW_DEBUG} env)')
     parser.add_argument('-D', '--httpdebug', default=False, action='store_true',
                         help=f'Enable debugging of http requests')
+    parser.add_argument('-s', '--service', default=False, action='store_true',
+                        help=f'(re)Install systemd service unit file to {systemd_service_file}')
+    parser.add_argument('-S', '--uninstall-service', default=False, action='store_true',
+                        help=f'Uninstall systemd service unit file')
 
     args = parser.parse_args()
 
@@ -121,10 +157,59 @@ def parse_args():
     if args.insecure or os.environ.get('APP_ENVIRONMENT', None) == "dev":
         ssl_verify = False
         import urllib3
-
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+    if args.service:
+        # install systemd service
+        filepath = os.path.abspath(__file__)
+        filedir = os.path.dirname(filepath)
+        # warn if executable is not in system *bin directory
+        if filedir not in [x+y for x in ['/', '/usr', '/usr/local'] for y in ['/bin', '/sbin']]:
+            if 'y' != input(f"Warning, executable {filepath}) "
+                            f"is not in one of system *bin directory. Proceed? (y/N) ").lower():
+                error(f"Exiting. Please copy executable {os.path.basename(__file__)} "
+                      f"to one of system's bin directory and run again.")
+                sys.exit(1)
+        try:
+            with open(systemd_service_file, "w+") as fd:
+                fd.write(f"""[Unit]
+Description=Timekpr web client daemon
+After=multi-user.target
+
+[Service]
+Type=simple
+User=root
+ExecStart={filepath}
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+""")
+        except Exception as e:
+            debug(f'Got exception:', exc_info=True)
+            error(f'Failed to create unit file {systemd_service_file}: {type(e).__name__}({e})')
+            sys.exit(1)
+        run_cmd(["/usr/bin/systemctl", "daemon-reload"], exit_on_error=True)
+        run_cmd(["/usr/bin/systemctl", "enable", systemd_service_name+".service"], exit_on_error=True)
+        info(f"Success. (Although may want to run {os.path.basename(__file__)} -i "
+             f"and then systemctl restart {systemd_service_name}.service)")
+        sys.exit(0)
+
+    if args.uninstall_service:
+        run_cmd(["/usr/bin/systemctl", "stop", systemd_service_name+".service"], exit_on_error=True)
+        try:
+            os.unlink(systemd_service_file)
+        except Exception as e:
+            debug(f'Got exception:', exc_info=True)
+            error(f'Failed to remove unit file {systemd_service_file}: {e}')
+            sys.exit(1)
+        run_cmd(["/usr/bin/systemctl", "daemon-reload"], exit_on_error=True)
+        info("Success.")
+        sys.exit(0)
+
     if args.init:
+        # initialize credentials with pin
         try:
             pin = str(args.init)
             # first, create and write config to make sure that we can do it
@@ -144,7 +229,7 @@ def parse_args():
         except TimekrpwCliException as e:
             raise
         except Exception as e:
-            debug(f'got exception {type(e).__name__}({e}) while creating {credentials_path}, trace follows:', exc_info=True)
+            debug(f'Got exception:', exc_info=True)
             raise TimekrpwCliException(f'Failed to create {credentials_path}: {type(e).__name__}({str(e)})')
         sys.exit(1)
 
@@ -175,7 +260,7 @@ def read_config():
     except TimekrpwCliException as e:
         raise
     except Exception as e:
-        debug(f'got exception {type(e).__name__}({e}) while reading {credentials_path}, trace follows:', exc_info=True)
+        debug(f'Got exception:', exc_info=True)
         raise TimekrpwCliException(f'Failed to read {credentials_path}: {type(e).__name__}({str(e)})')
 
 
@@ -201,13 +286,8 @@ if __name__ == "__main__":
                         except ValueError:
                             raise TimekrpwCliException(f'bad amount given for user {user}: {amount}')
                         debug(f"trying to add {amount} for {user}")
-                        try:
-                            p = subprocess.run(["/usr/bin/timekpra", "--settimeleft", str(user), "+", str(amount)])
-                        except Exception as e:
-                            raise TimekrpwCliException(f'failed to run timekpra: {e}')
-                        if p.returncode != 0:
-                            raise TimekrpwCliException(f'timekpra exited with return code {p.returncode}')
-                        info(f"added {amount} of time to {user}")
+                        run_cmd(["/usr/bin/timekpra", "--settimeleft", str(user), "+", str(amount)])
+                        info(f"added {amount} seconds to {user}")
                     except TimekrpwCliException as e:
                         error(str(e))
                 # acknowledge that we've got data
