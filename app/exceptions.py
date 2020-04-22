@@ -1,0 +1,2 @@
+class TimekprwException(Exception):
+    pass

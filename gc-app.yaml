@@ -1,0 +1,13 @@
+runtime: python37
+
+env_variables:
+  # create your own copy of this file for real deploy
+  DATABASE_URL: ""
+  GOOGLE_CLIENT_ID: "NOTSET"
+  GOOGLE_CLIENT_SECRET: "NOTSET"
+
+handlers:
+  - url: /.*
+    secure: always
+    redirect_http_response_code: 301
+    script: auto

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block content %}
+    {% if not current_user.is_authenticated %}
+        <a class="button" href="/login">Login with Google account</a>
+    {% else %}
+        <p>Logged in as {{ current_user.email|e }}</p>
+        {% if current_user.hosts|length > 0 %}
+            Managed hosts and users:<br>
+            {% for host in current_user.hosts %}
+                <p>
+                <a class="button" href="{{ url_for('ui_host', host_uuid=host.uuid) }}">Host: {{ host.hostname }}
+                    {% if not host.authkey %}
+                        {% if not host.pin %}
+                            (deactivated)
+                        {% else %}
+                            (pending)
+                        {% endif %}
+                    {% endif %}</a><br>
+                {% if host.users|length > 0 %}
+                    &nbsp;&nbsp;&nbsp;&nbsp;Users:<br>
+                    {% for user in host.users %}
+                        &nbsp;&nbsp;&nbsp;&nbsp;<a class="button" href="{{ url_for('ui_time', user_uuid=user.uuid) }}">{{ user.login }}</a><br>
+                    {% endfor %}
+                {% else %}
+                    &nbsp;&nbsp;&nbsp;&nbsp;No users in this host (click on host to add users there).
+                {% endif %}
+                </p>
+            {% endfor %}
+        {% else %}
+            <p>No managed hosts found, please add some.</p>
+        {% endif %}
+        <p>
+        <a class="button" href="{{ url_for('ui_host_add') }}">Add managed host</a><br>
+        </p>
+    {% endif %}
+{% endblock %}
