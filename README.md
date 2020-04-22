@@ -1,8 +1,10 @@
-Web-based interface timekpr.
-============================
+Web-based interface for Timekpr-nExT.
+=====================================
+
+Timekpr-nExT is screen-time manager for Linux: https://launchpad.net/timekpr-next.
 
 This interface is intentionally made very simple.
-You can't fullty manage timekpr with it, only add/reduce time for user.
+You can't fully manage timekpr with it, only add/reduce time for user.
 
 First, install and configure timekpr.
 
