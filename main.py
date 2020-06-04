@@ -1,8 +1,19 @@
 #
 # TODO: after posting UI forms there is an option to user to send form again on page reload, need to change it
 #
-# TODO: set some DB size limit upon which there will be red warning on web frontend, such as "please contact maintainer: timekprw@.."
+# TODO: some bug: it logs in, then may log out for now reason
+#
+# TODO: need to set some DB size limit upon which there will be red warning on web frontend, such as "please contact maintainer: timekprw@.."
+#
 # TODO: of course it is bad idea to copy db on every commit (such as when timekprw-cli logged in...), that should be cached somehow
+#       maybe update 'last seen' not every time, but when it differs more than some amount
+# better way: do copy on every crucial update (time add or accept by host, or managing ops)
+#             and do another copy only if did not yet in last 24hrs or so
+#             or free limit will be reached in a few days with just one client working
+#
+# TODO: some bug there: added manager to host, then failed to login as that manager, probably it tries to create it again
+#
+#
 
 import logging
 from logging import debug, info, warning, error
