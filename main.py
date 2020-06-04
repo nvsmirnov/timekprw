@@ -2,27 +2,31 @@
 # TODO: after posting UI forms there is an option to user to send form again on page reload, need to change it
 #
 
+import logging
+from logging import debug, info, warning, error
+
+logging.basicConfig(level=logging.DEBUG)
+logging.getLogger().setLevel(logging.DEBUG)  # as I understand, this is required for gcp?
+
 import os
 import sys
 import html
 import uuid
 import re
 import json
+import multiprocessing
 
 from flask import redirect, request, url_for, abort, render_template
+import flask_migrate
 
 from flask_login import LoginManager, current_user, login_required, login_user, logout_user
 from oauthlib.oauth2 import WebApplicationClient
 import requests
 
-from app import app, db, models, forms
+from app import app, db, models, forms, db_permstore_instance
 from app.exceptions import *
-
-import logging
-from logging import debug, info, warning, error
-
-logging.basicConfig(level=logging.DEBUG)
-logging.getLogger().setLevel(logging.DEBUG)  # as I understand, this is required for gcp?
+from app.db_permstore import *
+from app.whoami import whoami
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
@@ -545,39 +549,49 @@ def dumpdata():
     return rv
 
 
-def dbupgrade():
+def run_in_child_process(func):
     try:
-        info(f"in dbupgrade(): started")
-        from flask_script import Manager
-        from flask_migrate import MigrateCommand
-        migratemanager = Manager(app)
-        sys.argv = ['flask', 'db', 'upgrade']  # some hacking
-        migratemanager.run({'db': MigrateCommand})
+        p = multiprocessing.Process(target=func)
+        debug(f"{whoami()}: starting {func.__name__} in child process")
+        p.start()
+        debug(f"{whoami()}: waiting for {func.__name__} to finish")
+        p.join()
+        debug(f"{whoami()}: {func.__name__} finished")
     except Exception as e:
-        error(f"in dbupgrade(): got exception: {e} (enable debug for more)")
-        debug(f"in dbupgrade(): exception follows:", exc_info=True)
+        error(f"Failed to run {func.__name__} as child process: {e} (enable debug for more)")
+        debug(f"{whoami()}: exception follows:", exc_info=True)
 
 
 @app.before_first_request
 def app_init():
-    # try to perform DB migration
-    # did not found another the way to automate this on GCP
+    if db_permstore_instance:
+        db_permstore_instance.get_from_permstore(db.session)
+
+    fresh_db = False
     try:
-        from multiprocessing import Process
-        p = Process(target=dbupgrade)
-        info(f"starting dbupgrade in child process")
-        p.start()
-        info(f"waiting for dbupgrade to finish")
-        p.join()
-        info(f"dbupgrade finished")
+        # baaad hack, but flask_migrate.current() returns nothing, and I don't know how to test if DB is newly created (i.e. sqlite), or existed before
+        if not db.engine.dialect.has_table(db.engine, 'alembic_version'):
+            # the only reason i know for this is when database is newly created
+            # and we definitely should not run db.create_all() before migration!
+            fresh_db = True
     except Exception as e:
-        error(f"Failed to run dbupgrade: {e} (enable debug for more)")
-        debug("exception follows:", exc_info=True)
+        error(f"got exception while trying to get db revision: {e} (enable debug for more)")
+        debug(f"exception follows:", exc_info=True)
 
     debug("running db.create_all()")
     db.create_all()
     debug("done db.create_all()")
 
+    try:
+        if fresh_db:
+            info("This is a fresh database, marking it as latest revision")
+            run_in_child_process(flask_migrate.stamp)
+        else:
+            debug("Trying to perform database migration")
+            run_in_child_process(flask_migrate.upgrade)
+    except Exception as e:
+        error(f"got exception while trying to upgrade db revision: {e} (enable debug for more)")
+        debug(f"exception follows:", exc_info=True)
 
     if os.environ.get('APP_ENVIRONMENT', None) == "dev":
 
@@ -602,32 +616,31 @@ def app_init():
             db.session.commit()
             debug("done creating dev objects")
 
+            # TODO: remove this in production
+            debug("creating built-in objects")
+            host = models.ManagedHost.query.filter_by(uuid='59e8368c-7dbc-11ea-923e-7cb0c2957d37').first()
+            if not host:
+                debug("creating host")
+                host = models.ManagedHost(uuid=str(uuid.UUID('59e8368c-7dbc-11ea-923e-7cb0c2957d37')), hostname='john')
+                user = models.ManagedUser(uuid=new_user_uuid(), login='rightrat', host=host)
+                db.session.add(user)
+                db.session.add(host)
+            manager1 = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
+            if not manager1:
+                debug("creating manager nsmirnov@gmail.com")
+                manager1 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth, ext_auth_id='118295366576899719337', email='nsmirnov@gmail.com')
+                manager1.hosts.append(host)
+                db.session.add(manager1)
+            manager2 = models.Manager.query.filter_by(email='nsmirnov.pda@gmail.com').first()
+            if not manager2:
+                debug("creating manager nsmirnov.pda@gmail.com")
+                manager2 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth, ext_auth_id='103494272264223262600', email='nsmirnov.pda@gmail.com')
+                manager2.hosts.append(host)
+                db.session.add(manager2)
+            db.session.commit()
+            debug("done creating built-in objects")
 
-    # TODO: remove this in production
-    debug("creating built-in objects")
-    host = models.ManagedHost.query.filter_by(uuid='59e8368c-7dbc-11ea-923e-7cb0c2957d37').first()
-    if not host:
-        debug("creating host")
-        host = models.ManagedHost(uuid=str(uuid.UUID('59e8368c-7dbc-11ea-923e-7cb0c2957d37')), hostname='john')
-        user = models.ManagedUser(uuid=new_user_uuid(), login='rightrat', host=host)
-        db.session.add(user)
-        db.session.add(host)
-    manager1 = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
-    if not manager1:
-        debug("creating manager nsmirnov@gmail.com")
-        manager1 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth, ext_auth_id='118295366576899719337', email='nsmirnov@gmail.com')
-        manager1.hosts.append(host)
-        db.session.add(manager1)
-    manager2 = models.Manager.query.filter_by(email='nsmirnov.pda@gmail.com').first()
-    if not manager2:
-        debug("creating manager nsmirnov.pda@gmail.com")
-        manager2 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth, ext_auth_id='103494272264223262600', email='nsmirnov.pda@gmail.com')
-        manager2.hosts.append(host)
-        db.session.add(manager2)
-    db.session.commit()
-    debug("done creating built-in objects")
-
-    debug(dumpdata())
+            debug(dumpdata())
 
 
 if __name__ == "__main__":

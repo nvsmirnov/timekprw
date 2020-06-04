@@ -9,8 +9,21 @@ from flask_script import Manager
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
 app.config.from_object(Config)
+
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
+
+from app.db_permstore import *
+
+db_permstore_instance = get_permstore_instance(app, db)
+
+if db_permstore_instance:
+    from sqlalchemy import event
+    @event.listens_for(db.session, 'after_commit')
+    def receive_after_commit(session):
+        db_permstore_instance.put_to_permstore(session)
+
+
 
 # how to migrate db (based on https://blog.miguelgrinberg.com/post/the-flask-mega-tutorial-part-iv-database):
 # set environment variables:

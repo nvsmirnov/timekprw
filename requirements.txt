@@ -9,3 +9,4 @@ Flask-WTF==0.14.3
 PyMySQL==0.9.3
 Flask-Script==2.0.6
 passlib==1.7.2
+google-cloud-storage
