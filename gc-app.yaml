@@ -7,7 +7,7 @@ env_variables:
   # use either DATABASE_URL or DATABASE_PERMSTORE_URL plus GCS_BUCKET
   DATABASE_URL: ""
   #DATABASE_PERMSTORE_URL: "gcs:permanent.db"
-  #GCS_BUCKET: "my-app-bucket"
+  #GCS_BUCKET: "my-app.appspot.com"
 
 handlers:
   - url: /.*

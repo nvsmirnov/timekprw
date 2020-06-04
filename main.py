@@ -1,6 +1,8 @@
 #
 # TODO: after posting UI forms there is an option to user to send form again on page reload, need to change it
 #
+# TODO: set some DB size limit upon which there will be red warning on web frontend, such as "please contact maintainer: timekprw@.."
+# TODO: of course it is bad idea to copy db on every commit (such as when timekprw-cli logged in...), that should be cached somehow
 
 import logging
 from logging import debug, info, warning, error
@@ -562,8 +564,19 @@ def run_in_child_process(func):
         debug(f"{whoami()}: exception follows:", exc_info=True)
 
 
+@app.before_request
+def app_before_request():
+    # note: before_request is called after before_first_request
+    #debug(f"{whoami()} called")
+    if db_permstore_instance:
+        # if database is empty, then it should be loaded from permanent storage
+        if not len(db.engine.table_names()):
+            db_permstore_instance.get_from_permstore(db.session)
+    #debug(f"{whoami()} finished")
+
 @app.before_first_request
 def app_init():
+    debug(f"{whoami()} called")
     if db_permstore_instance:
         db_permstore_instance.get_from_permstore(db.session)
 
@@ -639,9 +652,8 @@ def app_init():
                 db.session.add(manager2)
             db.session.commit()
             debug("done creating built-in objects")
-
-            debug(dumpdata())
-
+            #debug(dumpdata())
+    debug(f"{whoami()} finished")
 
 if __name__ == "__main__":
 

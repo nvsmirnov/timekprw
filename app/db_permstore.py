@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 import sqlite3
+import tempfile
 
 from app.whoami import whoami
 from logging import debug, info, warning, error
@@ -52,13 +53,12 @@ class DBPermstoreAbstract(ObjectWithWhoami):
             debug(f"{self.whoami()}: no permanent location defined, skipping")
             return True
         if os.path.exists(self.db_file_path):
-            debug(f"{self.whoami()}: file {self.db_file_path} already exists, skipping")
-            return True
-
+            debug(f"{self.whoami()}: overriding {self.db_file_path} from permanent storage")
+            #debug(f"{self.whoami()}: file {self.db_file_path} already exists, skipping")
+            #return True
         db_file_dir = os.path.dirname(self.db_file_path)
         if not os.path.exists(db_file_dir):
             os.mkdir(db_file_dir)
-
         if self.get_from_permstore_actual(session):
             info(f"Made working database copy from permanent storage {self.storage_type}:{self.db_permstore_path}")
         else:
@@ -79,19 +79,22 @@ class DBPermstoreFile(DBPermstoreAbstract):
     storage_type = "file"
     def get_from_permstore_actual(self, session):
         debug(f"{self.whoami()} called")
-        try:
-            shutil.copyfile(self.db_permstore_path, self.db_file_path)
-        except FileNotFoundError as e:
-            info(f"No permanent database file found at {self.db_permstore_path}, skipping file copy")
-            pass
+        #try:
+        #    shutil.copyfile(self.db_permstore_path, self.db_file_path)
+        #except FileNotFoundError as e:
+        #    info(f"No permanent database file found at {self.db_permstore_path}, skipping file copy")
+        #    pass
+        perm = sqlite3.connect(self.db_permstore_path)
+        working = sqlite3.connect(self.db_file_path)
+        perm.backup(working)
         debug(f"{self.whoami()} finished")
         return True
 
     def put_to_permstore_actual(self, session):
         debug(f"{self.whoami()} called")
         working = sqlite3.connect(self.db_file_path)
-        backup = sqlite3.connect(self.db_permstore_path)
-        working.backup(backup)
+        perm = sqlite3.connect(self.db_permstore_path)
+        working.backup(perm)
         debug(f"{self.whoami()} finished")
         return True
 
@@ -104,7 +107,11 @@ class DBPermstoreGCS(DBPermstoreAbstract):
             storage_client = storage.Client()
             bucket = storage_client.bucket(os.environ.get("GCS_BUCKET", None))
             blob = bucket.blob(self.db_permstore_path)
-            blob.download_to_filename(self.db_file_path)
+            tmpf = tempfile.NamedTemporaryFile(prefix='timekprw-gcs-download')
+            blob.download_to_filename(tmpf.name)
+            perm = sqlite3.connect(tmpf.name)
+            working = sqlite3.connect(self.db_file_path)
+            perm.backup(working)
         except Exception as e:
             error(f"Failed to get database from permanent storage: {e}")
             debug(f"exception follows:", exc_info=True)
@@ -115,11 +122,14 @@ class DBPermstoreGCS(DBPermstoreAbstract):
     def put_to_permstore_actual(self, session):
         debug(f"{self.whoami()} called")
         try:
+            working = sqlite3.connect(self.db_file_path)
+            tmpf = tempfile.NamedTemporaryFile(prefix='timekprw-gcs-upload')
+            perm = sqlite3.connect(tmpf.name)
+            working.backup(perm)
             storage_client = storage.Client()
             bucket = storage_client.bucket(os.environ.get("GCS_BUCKET", None))
             blob = bucket.blob(self.db_permstore_path)
-            # TODO: this should be changed to: backup to temporary file, then upload
-            blob.upload_from_filename(self.db_file_path)
+            blob.upload_from_filename(tmpf.name)
         except Exception as e:
             error(f"Failed to save database to permanent storage: {e}")
             debug(f"exception follows:", exc_info=True)
@@ -140,7 +150,7 @@ def get_permstore_instance(app, db):
             url_type = m.group(1).lower()
             path = m.group(2)
             if url_type == 'file':
-                db_permstore_instance = DBPermstoreFile(app, db, app.config['DATABASE_PATH'], path)
+                db_permstore_instance = DBPermstoreFile(app, db, app.config['DATABASE_FILE_PATH'], path)
             elif url_type == 'gcs':
                 if not os.environ.get('GCS_BUCKET', None):
                     error(f"Refusing to use GCS as permanent store because GCS_BUCKET is not set")
@@ -150,7 +160,7 @@ def get_permstore_instance(app, db):
                     except Exception as e:
                         error(f"Internal error in {whoami()}: failed to initialize GCS API: {e}")
                     else:
-                        db_permstore_instance = DBPermstoreGCS(app, db, app.config['DATABASE_PATH'], path)
+                        db_permstore_instance = DBPermstoreGCS(app, db, app.config['DATABASE_FILE_PATH'], path)
             else:
                 error(f"{whoami()}: unknown permanent storage type '{url_type}', failed to initialize permanent storage")
     debug(f"{whoami()}: db permanent storage is {db_permstore_instance}")
