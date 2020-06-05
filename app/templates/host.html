@@ -21,7 +21,7 @@
                     You may recreate access pin to re-add host:
                     <a class="button" href="{{ url_for('ui_host_set_pin', host_uuid=host.uuid) }}">Set access pin</a><br>
                 {% else %}
-                    Host is active. Last seen: {{ host.auth_lastsuccess|e }}<br>
+                    Host last seen (server's time zone): {{ host.auth_lastsuccess|e }}<br>
                     <a class="button" href="{{ url_for('ui_host_deactivate', host_uuid=host.uuid) }}">Deactivate host</a><br>
                 {% endif %}
             {% endif %}
