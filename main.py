@@ -2,7 +2,7 @@
 # TODO: after posting UI forms there is an option to user to send form again on page reload, need to change it
 # TODO: some bug: user logs in via google account, then becomes logged out for now reason
 # TODO: need to set some DB size limit upon which there will be red warning on web frontend, such as "please contact maintainer: timekprw@.."
-# TODO: some bug there: added manager to host, then failed to login as that manager, probably it tries to create it again
+# TODO: need admin interface
 #
 
 import logging
@@ -79,12 +79,12 @@ def load_user(user_id):
 
 @app.route("/")
 def webroot():
-    if not current_user.is_authenticated:
-        if os.environ.get('APP_ENVIRONMENT', None) == "dev":
-            # TODO: remove this in prod
-            user = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
-            login_user(user, remember=True)
-            return redirect(url_for("webroot"))
+    #if not current_user.is_authenticated:
+    #    if os.environ.get('APP_ENVIRONMENT', None) == "dev":
+    #        # TODO: remove this in prod
+    #        user = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
+    #        login_user(user, remember=True)
+    #        return redirect(url_for("webroot"))
 
     return render_template('main.html', title='Home', current_user=current_user)
 
@@ -179,15 +179,19 @@ def ui_host_manager_add(host_uuid):
         abort(403, 'No host found with given id and managed by you')
     form = forms.HostAddManagerForm()
     if form.validate_on_submit():
-        email = form.email.data
-        manager = models.Manager.query.filter(models.Manager.email.ilike(email)).first()
-        if manager:
-            if host in manager.hosts:
-                abort(403, f"Host already managed by {html.escape(email)}")
+        email = form.email.data.lower()
+        managers = models.Manager.query.filter(models.Manager.email.ilike(email))
+        if managers.first():
+            for manager in managers:
+                if host in manager.hosts:
+                    abort(403, f"Host already managed by {html.escape(email)}")
+                else:
+                    manager.hosts.append(host)
         else:
+            # create new manager
             manager = models.Manager(email=email)
             db.session.add(manager)
-        manager.hosts.append(host)
+            manager.hosts.append(host)
         db.commit_and_sync()
         return redirect(url_for("ui_host", host_uuid=host_uuid))
     else:
@@ -473,7 +477,7 @@ def login_callback():
     # app, and now you've verified their email through Google!
     if userinfo_response.json().get("email_verified"):
         unique_id = userinfo_response.json()["sub"]
-        users_email = userinfo_response.json()["email"]
+        users_email = userinfo_response.json()["email"].lower()
         # picture = userinfo_response.json()["picture"]
         users_name = userinfo_response.json()["given_name"]
     else:
@@ -481,10 +485,17 @@ def login_callback():
 
     # Create a user in your db with the information provided by Google
     user = models.Manager.query.filter_by(ext_auth_id=unique_id, ext_auth_type=models.ExtAuthTypeGoogleAuth).first()
+    if not user:
+        # no user with given id, try to search by email among google-hosted users
+        user = models.Manager.query.filter_by(email=users_email, ext_auth_type=models.ExtAuthTypeGoogleAuth).first()
+        if not user:
+            # no user with this email among google-hosted users, try to search by email with no type set
+            user = models.Manager.query.filter(db.and_(models.Manager.email == users_email, models.Manager.ext_auth_type == None)).first()
     if user:
         # update user's data if we already have it
         if user.name != users_name: user.name = users_name
         if user.email != users_email: user.email = users_email
+        if user.ext_auth_type != models.ExtAuthTypeGoogleAuth: user.ext_auth_type = models.ExtAuthTypeGoogleAuth
         # if user.picture != picture: user.picture = picture
     else:
         user = models.Manager(ext_auth_id=unique_id, ext_auth_type=models.ExtAuthTypeGoogleAuth, name=users_name,
@@ -658,13 +669,13 @@ def app_init():
                                           ext_auth_id='118295366576899719337', email='nsmirnov@gmail.com')
                 manager1.hosts.append(host)
                 db.session.add(manager1)
-            manager2 = models.Manager.query.filter_by(email='nsmirnov.pda@gmail.com').first()
-            if not manager2:
-                debug("creating manager nsmirnov.pda@gmail.com")
-                manager2 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth,
-                                          ext_auth_id='103494272264223262600', email='nsmirnov.pda@gmail.com')
-                manager2.hosts.append(host)
-                db.session.add(manager2)
+            #manager2 = models.Manager.query.filter_by(email='nsmirnov.pda@gmail.com').first()
+            #if not manager2:
+            #    debug("creating manager nsmirnov.pda@gmail.com")
+            #    manager2 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth,
+            #                              ext_auth_id='103494272264223262600', email='nsmirnov.pda@gmail.com')
+            #    manager2.hosts.append(host)
+            #    db.session.add(manager2)
             db.commit_and_sync()
             debug("done creating built-in objects")
             # debug(dumpdata())

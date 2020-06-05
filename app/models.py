@@ -33,7 +33,7 @@ class Manager(db.Model, UserMixin):  # UserMixin for flask_login
     ext_auth_type = db.Column(db.String(256), index=True)  # type of external authentication system, one of ManagerExtTypeXXXXX
     ext_auth_id = db.Column(db.String(256), index=True)  # id in external authentication system
     name = db.Column(db.Text)
-    email = db.Column(db.String(256), index=True, unique=True)
+    email = db.Column(db.String(256), index=True)
 
     hosts = relationship(
         "ManagedHost",
