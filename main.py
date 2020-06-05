@@ -1,6 +1,6 @@
 #
-# TODO: after posting UI forms there is an option to user to send form again on page reload, need to change it
-# TODO: some bug: user logs in via google account, then becomes logged out for now reason
+# TODO: after posting UI forms there is an option for user to send form again on page reload, need to change it
+# TODO: some bug: user logs in via google account, then suddenly may (or may not) become logged out for no reason
 # TODO: need to set some DB size limit upon which there will be red warning on web frontend, such as "please contact maintainer: timekprw@.."
 # TODO: need admin interface
 #
