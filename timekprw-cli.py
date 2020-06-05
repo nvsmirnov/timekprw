@@ -276,23 +276,26 @@ if __name__ == "__main__":
                 answer = rest(url=f"/rest/overrides/{host_uuid}", data=creds, type="POST", required_members="overrides")
                 overrides = answer["overrides"]
 
-                for user in overrides:
-                    try:
-                        amount = 0
-                        if not re.match('^[\w\-\.]+$', user):
-                            raise TimekrpwCliException(f'bad username in answer: {user}')
+                if not len(overrides):
+                    debug("got no overrides from server")
+                else:
+                    for user in overrides:
                         try:
-                            amount = int(overrides[user])
-                        except ValueError:
-                            raise TimekrpwCliException(f'bad amount given for user {user}: {amount}')
-                        debug(f"trying to add {amount} for {user}")
-                        run_cmd(["/usr/bin/timekpra", "--settimeleft", str(user), "+", str(amount)])
-                        info(f"added {amount} seconds to {user}")
-                    except TimekrpwCliException as e:
-                        error(str(e))
-                # acknowledge that we've got data
-                debug("send ack to server")
-                rest(url=f"/rest/overrides-ack/{host_uuid}", type="POST", data=creds)
+                            amount = 0
+                            if not re.match('^[\w\-\.]+$', user):
+                                raise TimekrpwCliException(f'bad username in answer: {user}')
+                            try:
+                                amount = int(overrides[user])
+                            except ValueError:
+                                raise TimekrpwCliException(f'bad amount given for user {user}: {amount}')
+                            debug(f"trying to add {amount} for {user}")
+                            run_cmd(["/usr/bin/timekpra", "--settimeleft", str(user), "+", str(amount)])
+                            info(f"added {amount} seconds to {user}")
+                        except TimekrpwCliException as e:
+                            error(str(e))
+                    # acknowledge that we've got data
+                    debug("send ack to server")
+                    rest(url=f"/rest/overrides-ack/{host_uuid}", type="POST", data=creds)
             except TimekrpwCliException as e:
                 error(str(e))
             debug(f"sleeping for {sleep_interval} seconds...")
