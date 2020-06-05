@@ -20,7 +20,10 @@ class Config(object):
     DATABASE_PERMSTORE_URL = os.environ.get('DATABASE_PERMSTORE_URL', None)
     if DATABASE_PERMSTORE_URL:
         # store DB permanently in DATABASE_PERMSTORE_URL, and working temporary copy (on GCP /tmp is in-memory)
-        DATABASE_FILE_PATH = '/tmp/timekprw-tmp.db'
+        if os.environ.get('APP_ENVIRONMENT', None) == "dev":
+            DATABASE_FILE_PATH = os.path.join(basedir, 'data/timekprw-tmp.db')
+        else:
+            DATABASE_FILE_PATH = '/tmp/timekprw-tmp.db'
         SQLALCHEMY_DATABASE_URI = 'sqlite:///' + DATABASE_FILE_PATH
     else:
         # use specified DB URL

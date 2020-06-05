@@ -1,18 +1,8 @@
 #
 # TODO: after posting UI forms there is an option to user to send form again on page reload, need to change it
-#
-# TODO: some bug: it logs in, then may log out for now reason
-#
+# TODO: some bug: user logs in via google account, then becomes logged out for now reason
 # TODO: need to set some DB size limit upon which there will be red warning on web frontend, such as "please contact maintainer: timekprw@.."
-#
-# TODO: of course it is bad idea to copy db on every commit (such as when timekprw-cli logged in...), that should be cached somehow
-#       maybe update 'last seen' not every time, but when it differs more than some amount
-# better way: do copy on every crucial update (time add or accept by host, or managing ops)
-#             and do another copy only if did not yet in last 24hrs or so
-#             or free limit will be reached in a few days with just one client working
-#
 # TODO: some bug there: added manager to host, then failed to login as that manager, probably it tries to create it again
-#
 #
 
 import logging
@@ -36,10 +26,10 @@ from flask_login import LoginManager, current_user, login_required, login_user, 
 from oauthlib.oauth2 import WebApplicationClient
 import requests
 
-from app import app, db, models, forms, db_permstore_instance
+from app import app, db, models, forms
 from app.exceptions import *
-from app.db_permstore import *
 from app.whoami import whoami
+from app.db_permstore import SyncPriorityDelayed, SyncPriorityNormal, SyncPriorityUrgent
 
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
@@ -72,7 +62,7 @@ def new_host_uuid():
 def new_user_uuid():
     # TODO: this is subject to race condition, but chances are very unlikely
     while True:
-        newuuid=str(uuid.uuid1()).lower()
+        newuuid = str(uuid.uuid1()).lower()
         if not models.ManagedUser.query.filter_by(uuid=newuuid).first():
             return newuuid
 
@@ -122,11 +112,11 @@ def ui_host_add():
             for host in current_user.hosts:
                 if hostname.lower() == host.hostname.lower():
                     abort(403, f"Host {html.escape(hostname)} already exists among your hosts")
-            host=models.ManagedHost(hostname=hostname, uuid=new_host_uuid())
+            host = models.ManagedHost(hostname=hostname, uuid=new_host_uuid())
             db.session.add(host)
             current_user.hosts.append(host)
             host.pin_generate()
-            db.session.commit()
+            db.commit_and_sync()
             return render_template('host.html', title=host.hostname, host=host)
         else:
             return render_template('host-add.html', title='Add host', form=form)
@@ -145,7 +135,7 @@ def ui_host_rm(host_uuid):
     form = forms.HostRemoveForm()
     if form.validate_on_submit():
         db.session.delete(host)
-        db.session.commit()
+        db.commit_and_sync()
         return redirect(url_for("webroot"))
     else:
         return render_template('host-rm.html', title=f'Confirm remove {host.hostname}', host=host, form=form)
@@ -161,7 +151,7 @@ def ui_host_set_pin(host_uuid):
         abort(403, 'No host found with given id and managed by you')
     host.authkey = None
     host.pin_generate()
-    db.session.commit()
+    db.commit_and_sync()
     return redirect(url_for('ui_host', host_uuid=host_uuid))
 
 
@@ -175,7 +165,7 @@ def ui_host_deactivate(host_uuid):
         abort(403, 'No host found with given id and managed by you')
     host.pin = None
     host.authkey = None
-    db.session.commit()
+    db.commit_and_sync()
     return redirect(url_for('ui_host', host_uuid=host_uuid))
 
 
@@ -197,7 +187,7 @@ def ui_host_manager_add(host_uuid):
             manager = models.Manager(email=email)
             db.session.add(manager)
         manager.hosts.append(host)
-        db.session.commit()
+        db.commit_and_sync()
         return redirect(url_for("ui_host", host_uuid=host_uuid))
     else:
         return render_template('host-manager-add.html', title=f'Add manager for {host.hostname}', host=host, form=form)
@@ -218,7 +208,7 @@ def ui_host_manager_rm(host_uuid, manager_id):
     if manager not in host.managers:
         abort(403, 'This manager does not manage this host')
     host.managers.remove(manager)
-    db.session.commit()
+    db.commit_and_sync()
     return redirect(url_for("ui_host", host_uuid=host_uuid))
 
 
@@ -239,7 +229,7 @@ def ui_host_user_add(host_uuid):
         user = models.ManagedUser(uuid=new_user_uuid(), login=login)
         db.session.add(user)
         host.users.append(user)
-        db.session.commit()
+        db.commit_and_sync()
         return redirect(url_for("ui_host", host_uuid=host_uuid))
     else:
         return render_template('host-user-add.html', title=f'Add user on {host.hostname}', host=host, form=form)
@@ -258,7 +248,7 @@ def ui_host_user_rm(host_uuid, user_id):
     if user.host != host:
         abort(403, 'This user does not belong to this host')
     host.users.remove(user)
-    db.session.commit()
+    db.commit_and_sync()
     return redirect(url_for("ui_host", host_uuid=host_uuid))
 
 
@@ -275,7 +265,7 @@ def ui_time(user_uuid):
         override = models.TimeOverride(amount=amount, status=models.TimeOverrideStatusQueued,
                                        user=user, owner=current_user)
         db.session.add(override)
-        db.session.commit()
+        db.commit_and_sync()
         return render_template('time_added.html', user=user, amount=amount)
     else:
         return render_template('time.html', title='Time Override', form=form, username=str(user))
@@ -302,7 +292,7 @@ def rest_check_auth(host, data):
 @app.route("/rest/host-getauthkey", methods=['POST'])
 def rest_host_getauthkey():
     """
-    REST: add host with pin and return auth key to clien
+    REST: add host with pin and return auth key to client
     Authentication is not required
     :param
     {
@@ -338,7 +328,7 @@ def rest_host_getauthkey():
         host.authkey = authkey_hash
         host.authkey_trycount = 0
         host.pin = None
-        db.session.commit()
+        db.commit_and_sync()
         return {"success": True, "authkey": authkey_plain, "hostuuid": host.uuid}
     else:  # "pin" is not in data
         return {**rv, "message": "pin expected"}
@@ -410,7 +400,7 @@ def rest_overrides_ack(host_uuid):
         # change status of last override
         for override in [x for x in user.timeoverrides if x.status == models.TimeOverrideStatusQueued]:
             override.status = models.TimeOverrideStatusApplied
-    db.session.commit()
+    db.commit_and_sync()
     return {'success': True}
 
 
@@ -483,7 +473,7 @@ def login_callback():
     if userinfo_response.json().get("email_verified"):
         unique_id = userinfo_response.json()["sub"]
         users_email = userinfo_response.json()["email"]
-        #picture = userinfo_response.json()["picture"]
+        # picture = userinfo_response.json()["picture"]
         users_name = userinfo_response.json()["given_name"]
     else:
         return "User email not available or not verified by Google.", 400
@@ -494,11 +484,12 @@ def login_callback():
         # update user's data if we already have it
         if user.name != users_name: user.name = users_name
         if user.email != users_email: user.email = users_email
-        #if user.picture != picture: user.picture = picture
+        # if user.picture != picture: user.picture = picture
     else:
-        user = models.Manager(ext_auth_id=unique_id, ext_auth_type=models.ExtAuthTypeGoogleAuth, name=users_name, email=users_email)
+        user = models.Manager(ext_auth_id=unique_id, ext_auth_type=models.ExtAuthTypeGoogleAuth, name=users_name,
+                              email=users_email)
         db.session.add(user)
-    db.session.commit()
+    db.commit_and_sync()
 
     login_user(user, remember=True)
 
@@ -532,9 +523,9 @@ def dumpdata():
         #   a) probably will not do this on large production DB;
         #   b) understands what he doing
         # anyway all this dumping requires rewrite to not to read all data into memory at once.
-        return("Refused to dump data when debug is disabled")
+        return ("Refused to dump data when debug is disabled")
 
-    rv=''
+    rv = ''
     rv += 'Managers:\n'
     for manager in models.Manager.query.all():
         rv += f'  {repr(manager)}\n'
@@ -575,21 +566,31 @@ def run_in_child_process(func):
         debug(f"{whoami()}: exception follows:", exc_info=True)
 
 
+#@app.after_request
+#def app_after_request():
+#    """Do delayed sync after request if needed."""
+#    # TODO: when commit is waiting for sync, this may be called two times: one after commit, other here
+#    #       need to think if this is really needed; the idea was to sync even when there is no activity since last commit...
+#    #       but every rest request commits info about client activity, so may be it is the same this call in after_request
+#    db.schedule_sync(sync_priority=SyncPriorityDelayed)
+
+
 @app.before_request
 def app_before_request():
+    """Get database from permanent storage before request if needed."""
     # note: before_request is called after before_first_request
-    #debug(f"{whoami()} called")
-    if db_permstore_instance:
+    if db.db_permstore_instance:
         # if database is empty, then it should be loaded from permanent storage
         if not len(db.engine.table_names()):
-            db_permstore_instance.get_from_permstore(db.session)
-    #debug(f"{whoami()} finished")
+            db.db_permstore_instance.get_from_permstore()
+
 
 @app.before_first_request
 def app_init():
+    """Get DB from permanent storage if needed. Upgrade database if needed."""
     debug(f"{whoami()} called")
-    if db_permstore_instance:
-        db_permstore_instance.get_from_permstore(db.session)
+    if db.db_permstore_instance:
+        db.db_permstore_instance.get_from_permstore()
 
     fresh_db = False
     try:
@@ -637,7 +638,7 @@ def app_init():
             manager1.hosts.append(host2)
             db.session.add(manager1)
 
-            db.session.commit()
+            db.commit_and_sync()
             debug("done creating dev objects")
 
             # TODO: remove this in production
@@ -652,19 +653,22 @@ def app_init():
             manager1 = models.Manager.query.filter_by(email='nsmirnov@gmail.com').first()
             if not manager1:
                 debug("creating manager nsmirnov@gmail.com")
-                manager1 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth, ext_auth_id='118295366576899719337', email='nsmirnov@gmail.com')
+                manager1 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth,
+                                          ext_auth_id='118295366576899719337', email='nsmirnov@gmail.com')
                 manager1.hosts.append(host)
                 db.session.add(manager1)
             manager2 = models.Manager.query.filter_by(email='nsmirnov.pda@gmail.com').first()
             if not manager2:
                 debug("creating manager nsmirnov.pda@gmail.com")
-                manager2 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth, ext_auth_id='103494272264223262600', email='nsmirnov.pda@gmail.com')
+                manager2 = models.Manager(ext_auth_type=models.ExtAuthTypeGoogleAuth,
+                                          ext_auth_id='103494272264223262600', email='nsmirnov.pda@gmail.com')
                 manager2.hosts.append(host)
                 db.session.add(manager2)
-            db.session.commit()
+            db.commit_and_sync()
             debug("done creating built-in objects")
-            #debug(dumpdata())
+            # debug(dumpdata())
     debug(f"{whoami()} finished")
+
 
 if __name__ == "__main__":
 
