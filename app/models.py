@@ -4,6 +4,7 @@
 
 from app import db
 from app.exceptions import *
+from app.db_permstore import SyncPriorityDelayed, SyncPriorityNormal, SyncPriorityUrgent
 
 import datetime
 import random
@@ -125,7 +126,7 @@ class ManagedHost(db.Model):
                 self.authkey_trycount += 1
             else:
                 self.auth_lastsuccess = datetime.datetime.utcnow()
-            db.session.commit()
+            db.commit_and_sync(sync_priority=SyncPriorityDelayed)
             return rv
         except Exception as e:
             debug(f'got exception in authkey_check: {e}, trace follows:', exc_info=True)

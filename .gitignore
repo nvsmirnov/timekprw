@@ -1,5 +1,6 @@
 .idea
 gc-app-local.yaml
+gcs-dev-creds-local.json
 data/
 
 # below is standard file from github python-gitignore template

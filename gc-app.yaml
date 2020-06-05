@@ -2,9 +2,12 @@ runtime: python37
 
 env_variables:
   # create your own copy of this file for real deploy
-  DATABASE_URL: ""
   GOOGLE_CLIENT_ID: "NOTSET"
   GOOGLE_CLIENT_SECRET: "NOTSET"
+  # use either DATABASE_URL or DATABASE_PERMSTORE_URL plus GCS_BUCKET
+  DATABASE_URL: ""
+  #DATABASE_PERMSTORE_URL: "gcs:permanent.db"
+  #GCS_BUCKET: "my-app.appspot.com"
 
 handlers:
   - url: /.*
