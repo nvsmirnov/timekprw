@@ -18,6 +18,7 @@ import uuid
 import re
 import json
 import multiprocessing
+import atexit
 
 from flask import redirect, request, url_for, abort, render_template
 import flask_migrate
@@ -489,7 +490,7 @@ def login_callback():
         user = models.Manager(ext_auth_id=unique_id, ext_auth_type=models.ExtAuthTypeGoogleAuth, name=users_name,
                               email=users_email)
         db.session.add(user)
-    db.commit_and_sync()
+    db.commit_and_sync(sync_priority=SyncPriorityDelayed)
 
     login_user(user, remember=True)
 
@@ -668,6 +669,16 @@ def app_init():
             debug("done creating built-in objects")
             # debug(dumpdata())
     debug(f"{whoami()} finished")
+
+
+def sync_forcedly_at_exit():
+    # note that it may be called many times; as for db.schedule_sync, it checks for pending commits, so it is ok
+    info(f"{whoami()} called")
+    with app.app_context():
+        db.schedule_sync(sync_priority=SyncPriorityUrgent)
+# note that when you register atexit hook here (not in main), function may be called few times
+# but when you register in main, it will not be registered when running on GCP
+atexit.register(sync_forcedly_at_exit)
 
 
 if __name__ == "__main__":
