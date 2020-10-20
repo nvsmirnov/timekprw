@@ -1,0 +1,8 @@
+# or see this: https://stackoverflow.com/questions/60982068/how-can-i-specify-a-region-for-the-cloud-storage-buckets-used-by-cloud-build-for
+steps:
+- name: 'gcr.io/cloud-builders/gcloud'
+  args: ['app', 'deploy', 'gc-app-local.yaml', '--project', 'timekprw', '--version', 'dev']
+artifacts:
+  objects:
+    location: 'gs://timekprw-builds'
+    paths: ['*']

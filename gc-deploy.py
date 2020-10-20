@@ -20,4 +20,5 @@ if not os.path.exists(app_config_real):
     error(f"No {app_config_real} found, you may want to create it as a copy of {app_config_template}")
     sys.exit(1)
 
-run(f"gcloud app deploy {app_config_real} -q --project timekprw --version dev")
+#run(f"gcloud app deploy {app_config_real} -q --project timekprw --version dev")
+run(f'gcloud builds submit --gcs-source-staging-dir="gs://timekprw-builds/cloudbuild-custom" --config gc-build.yaml')
