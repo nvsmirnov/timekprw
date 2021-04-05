@@ -22,7 +22,8 @@ systemd_service_name = f'timekprw-cli'
 systemd_service_file = f'/etc/systemd/system/{systemd_service_name}.service'
 
 credentials_path = os.environ.get(ENVNAME_TIMEKPRW_CREDS, '/var/lib/timekprw-cli/timekprw-cli.conf')
-rest_url = os.environ.get(ENVNAME_TIMEKPRW_RESTURL, 'https://timekprw.ew.r.appspot.com')
+#rest_url = os.environ.get(ENVNAME_TIMEKPRW_RESTURL, 'https://timekprw.ew.r.appspot.com')
+rest_url = os.environ.get(ENVNAME_TIMEKPRW_RESTURL, 'https://timekprw-kajowpiipq-ew.a.run.app')
 
 sleep_interval = 30
 
