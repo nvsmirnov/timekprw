@@ -1,6 +1,7 @@
 .idea
 gc-app-local.yaml
 gcs-dev-creds-local.json
+Dockerfile.tmp
 data/
 
 # below is standard file from github python-gitignore template

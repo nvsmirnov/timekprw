@@ -21,4 +21,4 @@ if not os.path.exists(app_config_real):
     sys.exit(1)
 
 #run(f"gcloud app deploy {app_config_real} -q --project timekprw --version dev")
-run(f'gcloud builds submit --gcs-source-staging-dir="gs://timekprw-builds/cloudbuild-custom" --config gc-build.yaml')
+run(f'gcloud builds submit ./ --gcs-source-staging-dir="gs://timekprw-builds/cloudbuild-custom" --config gc-build.yaml')

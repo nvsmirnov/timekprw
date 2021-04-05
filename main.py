@@ -427,11 +427,17 @@ def login():
     google_provider_cfg = get_google_provider_cfg()
     authorization_endpoint = google_provider_cfg["authorization_endpoint"]
 
+    redirect_uri = request.base_url + "/callback"
+    if os.environ.get("REVERSE_PROXY_FIX", None):
+        # dirty hack for google cloud run
+        # TODO: dirty hacks here, get rid of them!!!
+        redirect_uri = re.sub('(?i)^http\\:', 'https:', redirect_uri)
+
     # Use library to construct the request for Google login and provide
     # scopes that let you retrieve user's profile from Google
     request_uri = client.prepare_request_uri(
         authorization_endpoint,
-        redirect_uri=request.base_url + "/callback",
+        redirect_uri=redirect_uri,
         scope=["openid", "email", "profile"],
     )
     return redirect(request_uri)
@@ -442,6 +448,12 @@ def login_callback():
     """Callback for Google Auth"""
     # Get authorization code Google sent back to you
     code = request.args.get("code")
+    request_url = request.url
+    request_base_url = request.base_url
+    if os.environ.get("REVERSE_PROXY_FIX", None):
+        # TODO: dirty hacks here, get rid of them!!!
+        request_url = re.sub('(?i)^http\\:', 'https:', request_url)
+        request_base_url = re.sub('(?i)^http\\:', 'https:', request_base_url)
 
     # Find out what URL to hit to get tokens that allow you to ask for
     # things on behalf of a user
@@ -451,8 +463,8 @@ def login_callback():
     # Prepare and send a request to get tokens! Yay tokens!
     token_url, headers, body = client.prepare_token_request(
         token_endpoint,
-        authorization_response=request.url,
-        redirect_url=request.base_url,
+        authorization_response=request_url,
+        redirect_url=request_base_url,
         code=code
     )
     token_response = requests.post(
@@ -699,8 +711,12 @@ if __name__ == "__main__":
     if os.environ.get('APP_ENVIRONMENT', None) == "dev":
         app.run(
             host="0.0.0.0",
+            port=int(os.environ.get("PORT", 5000)),
             debug=True,
             ssl_context=('devcert.crt', 'devcert.key')
         )
     else:
-        app.run()
+        app.run(
+            host="0.0.0.0",
+            port=int(os.environ.get("PORT", 5000))
+        )

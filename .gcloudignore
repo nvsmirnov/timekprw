@@ -14,6 +14,8 @@
 .gitignore
 
 data/
+venv
+venv/
 
 # Python pycache:
 __pycache__/
